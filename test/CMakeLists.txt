@@ -218,6 +218,13 @@ if(DBUS_WITH_GLIB)
     add_test_executable(test-userdb internals/userdb.c ${TEST_LIBRARIES})
     add_helper_executable(manual-authz manual-authz.c ${TEST_LIBRARIES})
     add_helper_executable(manual-test-thread-blocking thread-blocking.c ${TEST_LIBRARIES})
+    if(WIN32)
+        set(auth_windows_sspi_corrupt_SOURCES
+            test-auth-windows-sspi-corrupt.c
+            test-utils-auth.c
+        )
+        add_test_executable(test-auth-windows-sspi-corrupt "${auth_windows_sspi_corrupt_SOURCES}" ${TEST_LIBRARIES})
+    endif()
 endif()
 
 ### keep these in creation order, i.e. uppermost dirs first 

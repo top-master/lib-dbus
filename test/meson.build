@@ -440,7 +440,17 @@ if platform_windows
             'srcs': [ 'manual-paths.c' ],
             'link': [ libdbus_testutils, ],
             'test': false,
-        }
+        },
+        {
+            'name': 'test-auth-windows-sspi-corrupt',
+            'srcs': [
+                'test-auth-windows-sspi-corrupt.c',
+                'test-utils-auth.c'
+            ],
+            'link': [ libdbus_testutils, ],
+            'deps': [ glib, gio, ],
+            'test': true,
+        },
     ]
 endif
 
