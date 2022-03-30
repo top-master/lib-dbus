@@ -26,6 +26,7 @@ project(dbus
 
 option(DBUS_BUILD_TESTS "enable unit test code" ON)
 option(DBUS_ENABLE_INTRUSIVE_TESTS "enable tests that require insecure extra code in the library and binaries" OFF)
+option(DBUS_ENABLE_CONSUMER_TEST "enable test for a dbus library consumer" OFF)
 
 # replacement for AC_C_BIGENDIAN
 include (TestBigEndian)
@@ -733,6 +734,7 @@ message("        cxx compiler:             ${CXX_COMPILER}                     "
 message("        cxxflags:                 ${CMAKE_CXX_FLAGS}                  ")
 message("        cxxflags debug:           ${CMAKE_CXX_FLAGS_DEBUG}            ")
 message("        cxxflags release:         ${CMAKE_CXX_FLAGS_RELEASE}          ")
+message("        cmake version:            ${CMAKE_VERSION}                    ")
 message("        64-bit int:               ${DBUS_INT64_TYPE}                  ")
 message("        32-bit int:               ${DBUS_INT32_TYPE}                  ")
 message("        16-bit int:               ${DBUS_INT16_TYPE}                  ")
@@ -787,6 +789,10 @@ endif()
 
 if(DBUS_ENABLE_INTRUSIVE_TESTS AND DBUS_DISABLE_ASSERT)
     message("NOTE: building with unit tests but without assertions means tests may not properly report failures (this configuration is only useful when doing something like profiling the tests)")
+endif()
+
+if(DBUS_ENABLE_CONSUMER_TEST)
+    message("NOTE: building with dbus library consumer test")
 endif()
 
 if(DBUS_GCOV_ENABLED)

@@ -13,6 +13,10 @@ add_library(dbus-testutils STATIC
 )
 target_link_libraries(dbus-testutils ${DBUS_INTERNAL_LIBRARIES})
 
+if(DBUS_ENABLE_CONSUMER_TEST)
+    add_subdirectory(consumer)
+endif()
+
 if(DBUS_ENABLE_INTRUSIVE_TESTS)
     add_subdirectory( name-test )
 endif()
