@@ -426,6 +426,12 @@ tests += [
         'test': false,
     },
     {
+        'name': 'manual-socket-afunix',
+        'srcs': [ 'manual-socket-afunix.c' ],
+        'link': [ libdbus_testutils ],
+        'test': false,
+    },
+    {
         'name': 'manual-tcp',
         'srcs': [ 'manual-tcp.c' ],
         'link': [ libdbus_testutils, ],

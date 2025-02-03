@@ -94,6 +94,7 @@ add_helper_executable(test-exit ${test-exit_SOURCES} ${DBUS_INTERNAL_LIBRARIES})
 # to link, hence the quoting here
 add_helper_executable(test-segfault "${test-segfault_SOURCES}")
 add_helper_executable(test-sleep-forever ${test-sleep-forever_SOURCES} ${DBUS_INTERNAL_LIBRARIES})
+add_helper_executable(manual-socket-afunix manual-socket-afunix.c dbus-testutils)
 add_helper_executable(manual-tcp ${manual-tcp_SOURCES} ${DBUS_INTERNAL_LIBRARIES})
 add_helper_executable(manual-backtrace manual-backtrace.c dbus-1)
 if(WIN32)
