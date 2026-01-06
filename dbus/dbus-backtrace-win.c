@@ -150,7 +150,7 @@ static void dump_backtrace_for_thread (HANDLE hThread)
       if (SymFromAddr (GetCurrentProcess (), sf.AddrPC.Offset, &displacement, pSymbol))
         {
           if (displacement)
-            DPRINTF ("%3d %s+0x%I64x", i++, pSymbol->Name, displacement);
+            DPRINTF ("%3d %s+0x%" PRIx64, i++, pSymbol->Name, displacement);
           else
             DPRINTF ("%3d %s", i++, pSymbol->Name);
         }
