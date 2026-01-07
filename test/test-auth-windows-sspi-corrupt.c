@@ -183,6 +183,7 @@ do_corrupt_sspi_auth (Fixture       *f,
   output_sec_buffer.cbBuffer = _dbus_string_get_length (&f->plaintext);
   output_sec_buffer.pvBuffer = _dbus_string_get_data (&f->plaintext);
 
+  g_print ("\nInit security context\n");
   ss = InitializeSecurityContextW (&f->credentials,
                                    NULL,
                                    NULL,
