@@ -154,4 +154,7 @@ void test_incomplete (const gchar *message);
 
 gchar *test_get_helper_executable (const gchar *exe);
 
+void test_dump_args (const GPtrArray *argv);
+void test_dump_env (gchar **env);
+
 #endif
