@@ -54,8 +54,10 @@
 #endif
 
 /* Declarations missing in mingw's and windows sdk 7.0 headers */
+#ifndef __MINGW64_VERSION_MAJOR
 extern BOOL WINAPI ConvertStringSidToSidA (LPCSTR  StringSid, PSID *Sid);
 extern BOOL WINAPI ConvertSidToStringSidA (PSID Sid, LPSTR *StringSid);
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -981,6 +983,64 @@ is_winxp_sp3_or_lower (void)
       dwlConditionMask);
 }
 
+/**
+ * Gets SID from a token
+ * @param sid points to sid buffer, need to be freed with LocalFree()
+ * @param token a token to get the SID from
+ * @param error an error to set in case of failure
+ * @returns TRUE on success, FALSE otherwise
+ */
+dbus_bool_t
+_dbus_get_token_sid (char      **sid,
+                     HANDLE      token,
+                     DBusError  *error)
+{
+  TOKEN_USER *token_user = NULL;
+  DWORD n;
+  PSID psid;
+  int retval = FALSE;
+
+  if (!GetTokenInformation (token, TokenUser, NULL, 0, &n)
+      && GetLastError () != ERROR_INSUFFICIENT_BUFFER)
+    {
+      _dbus_win_set_error_from_win_error (error, GetLastError ());
+      return FALSE;
+    }
+
+  token_user = alloca (n);
+
+  if (token_user == NULL)
+    {
+      /* Ran out of stack space. Try to treat it as being out of heap space. */
+      _DBUS_SET_OOM (error);
+      return FALSE;
+    }
+
+  if (!GetTokenInformation (token, TokenUser, token_user, n, &n))
+    {
+      _dbus_win_set_error_from_win_error (error, GetLastError ());
+      return FALSE;
+    }
+
+  psid = token_user->User.Sid;
+
+  if (!IsValidSid (psid))
+    {
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Invalid token SID");
+      return FALSE;
+    }
+
+  if (!ConvertSidToStringSidA (psid, sid))
+    {
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Can't convert token SID to string");
+      return FALSE;
+    }
+
+  _dbus_verbose ("_dbus_get_token_sid() got '%s' and returns %d\n", *sid, retval);
+
+  return TRUE;
+}
+
 /** Gets our SID
  * @param sid points to sid buffer, need to be freed with LocalFree()
  * @param process_id the process id for which the sid should be returned (use 0 for current process)
@@ -989,13 +1049,11 @@ is_winxp_sp3_or_lower (void)
 dbus_bool_t
 _dbus_getsid(char **sid, dbus_pid_t process_id)
 {
+  HANDLE process_handle;
   HANDLE process_token = INVALID_HANDLE_VALUE;
-  TOKEN_USER *token_user = NULL;
-  DWORD n;
-  PSID psid;
+  DBusError error;
   int retval = FALSE;
 
-  HANDLE process_handle;
   if (process_id == 0)
     process_handle = GetCurrentProcess();
   else if (is_winxp_sp3_or_lower())
@@ -1006,31 +1064,15 @@ _dbus_getsid(char **sid, dbus_pid_t process_id)
   if (!OpenProcessToken (process_handle, TOKEN_QUERY, &process_token))
     {
       _dbus_win_warn_win_error ("OpenProcessToken failed", GetLastError ());
-      goto failed;
+      goto end;
     }
-  if ((!GetTokenInformation (process_token, TokenUser, NULL, 0, &n)
-            && GetLastError () != ERROR_INSUFFICIENT_BUFFER)
-           || (token_user = alloca (n)) == NULL
-           || !GetTokenInformation (process_token, TokenUser, token_user, n, &n))
-    {
-      _dbus_win_warn_win_error ("GetTokenInformation failed", GetLastError ());
-      goto failed;
-    }
-  psid = token_user->User.Sid;
-  if (!IsValidSid (psid))
-    {
-      _dbus_verbose("invalid sid\n");
-      goto failed;
-    }
-  if (!ConvertSidToStringSidA (psid, sid))
-    {
-      _dbus_verbose("invalid sid\n");
-      goto failed;
-    }
-//okay:
-  retval = TRUE;
+  dbus_error_init (&error);
+  retval = _dbus_get_token_sid (sid, process_token, &error);
+  if (!retval)
+    _dbus_warn ("Failed to get process token SID: %s\n", error.message);
+  dbus_error_free (&error);
 
-failed:
+end:
   CloseHandle (process_handle);
   if (process_token != INVALID_HANDLE_VALUE)
     CloseHandle (process_token);
@@ -3952,6 +3994,153 @@ _dbus_win_warn_win_error (const char *message,
   dbus_error_free (&error);
 }
 
+typedef struct DBusSSPIErrorEntry DBusSSPIErrorEntry;
+
+struct DBusSSPIErrorEntry
+{
+  SECURITY_STATUS  value;
+  const char      *literal;
+};
+
+#define def_sspi_err(literal) { literal, #literal },
+
+static DBusSSPIErrorEntry dbus_sspi_error_map[] =
+{
+  def_sspi_err (SEC_E_ALGORITHM_MISMATCH)
+  def_sspi_err (SEC_E_BAD_BINDINGS)
+  def_sspi_err (SEC_E_BAD_PKGID)
+  def_sspi_err (SEC_E_BUFFER_TOO_SMALL)
+  def_sspi_err (SEC_E_CANNOT_INSTALL)
+  def_sspi_err (SEC_E_CANNOT_PACK)
+  def_sspi_err (SEC_E_CERT_EXPIRED)
+  def_sspi_err (SEC_E_CERT_UNKNOWN)
+  def_sspi_err (SEC_E_CERT_WRONG_USAGE)
+  def_sspi_err (SEC_E_CONTEXT_EXPIRED)
+  def_sspi_err (SEC_E_CROSSREALM_DELEGATION_FAILURE)
+  def_sspi_err (SEC_E_CRYPTO_SYSTEM_INVALID)
+  def_sspi_err (SEC_E_DECRYPT_FAILURE)
+  def_sspi_err (SEC_E_DELEGATION_REQUIRED)
+  def_sspi_err (SEC_E_DOWNGRADE_DETECTED)
+  def_sspi_err (SEC_E_ENCRYPT_FAILURE)
+  def_sspi_err (SEC_E_ILLEGAL_MESSAGE)
+  def_sspi_err (SEC_E_INCOMPLETE_CREDENTIALS)
+  def_sspi_err (SEC_E_INCOMPLETE_MESSAGE)
+  def_sspi_err (SEC_E_INSUFFICIENT_MEMORY)
+  def_sspi_err (SEC_E_INTERNAL_ERROR)
+  def_sspi_err (SEC_E_INVALID_HANDLE)
+  def_sspi_err (SEC_E_INVALID_TOKEN)
+  def_sspi_err (SEC_E_ISSUING_CA_UNTRUSTED)
+  def_sspi_err (SEC_E_ISSUING_CA_UNTRUSTED_KDC)
+  def_sspi_err (SEC_E_KDC_CERT_EXPIRED)
+  def_sspi_err (SEC_E_KDC_CERT_REVOKED)
+  def_sspi_err (SEC_E_KDC_INVALID_REQUEST)
+  def_sspi_err (SEC_E_KDC_UNABLE_TO_REFER)
+  def_sspi_err (SEC_E_KDC_UNKNOWN_ETYPE)
+  def_sspi_err (SEC_E_LOGON_DENIED)
+  def_sspi_err (SEC_E_MAX_REFERRALS_EXCEEDED)
+  def_sspi_err (SEC_E_MESSAGE_ALTERED)
+  def_sspi_err (SEC_E_MULTIPLE_ACCOUNTS)
+  def_sspi_err (SEC_E_MUST_BE_KDC)
+  def_sspi_err (SEC_E_NO_AUTHENTICATING_AUTHORITY)
+  def_sspi_err (SEC_E_NO_CREDENTIALS)
+  def_sspi_err (SEC_E_NO_IMPERSONATION)
+  def_sspi_err (SEC_E_NO_IP_ADDRESSES)
+  def_sspi_err (SEC_E_NO_KERB_KEY)
+  def_sspi_err (SEC_E_NO_PA_DATA)
+  def_sspi_err (SEC_E_NO_S4U_PROT_SUPPORT)
+  def_sspi_err (SEC_E_NO_TGT_REPLY)
+  def_sspi_err (SEC_E_NOT_OWNER)
+  def_sspi_err (SEC_E_NOT_SUPPORTED)
+  def_sspi_err (SEC_E_OK)
+  def_sspi_err (SEC_E_OUT_OF_SEQUENCE)
+  def_sspi_err (SEC_E_PKINIT_CLIENT_FAILURE)
+  def_sspi_err (SEC_E_PKINIT_NAME_MISMATCH)
+  def_sspi_err (SEC_E_QOP_NOT_SUPPORTED)
+  def_sspi_err (SEC_E_REVOCATION_OFFLINE_C)
+  def_sspi_err (SEC_E_REVOCATION_OFFLINE_KDC)
+  def_sspi_err (SEC_E_SECPKG_NOT_FOUND)
+  def_sspi_err (SEC_E_SECURITY_QOS_FAILED)
+  def_sspi_err (SEC_E_SHUTDOWN_IN_PROGRESS)
+  def_sspi_err (SEC_E_SMARTCARD_CERT_EXPIRED)
+  def_sspi_err (SEC_E_SMARTCARD_CERT_REVOKED)
+  def_sspi_err (SEC_E_SMARTCARD_LOGON_REQUIRED)
+  def_sspi_err (SEC_E_STRONG_CRYPTO_NOT_SUPPORTED)
+  def_sspi_err (SEC_E_TARGET_UNKNOWN)
+  def_sspi_err (SEC_E_TIME_SKEW)
+  def_sspi_err (SEC_E_TOO_MANY_PRINCIPALS)
+  def_sspi_err (SEC_E_UNFINISHED_CONTEXT_DELETED)
+  def_sspi_err (SEC_E_UNKNOWN_CREDENTIALS)
+  def_sspi_err (SEC_E_UNSUPPORTED_FUNCTION)
+  def_sspi_err (SEC_E_UNSUPPORTED_PREAUTH)
+  def_sspi_err (SEC_E_UNTRUSTED_ROOT)
+  def_sspi_err (SEC_E_WRONG_CREDENTIAL_HANDLE)
+  def_sspi_err (SEC_E_WRONG_PRINCIPAL)
+  def_sspi_err (SEC_I_COMPLETE_AND_CONTINUE)
+  def_sspi_err (SEC_I_COMPLETE_NEEDED)
+  def_sspi_err (SEC_I_CONTEXT_EXPIRED)
+  def_sspi_err (SEC_I_CONTINUE_NEEDED)
+  def_sspi_err (SEC_I_INCOMPLETE_CREDENTIALS)
+  def_sspi_err (SEC_I_LOCAL_LOGON)
+  def_sspi_err (SEC_I_NO_LSA_CONTEXT)
+  def_sspi_err (SEC_I_RENEGOTIATE)
+  def_sspi_err (SEC_E_OK)
+};
+#undef def_sspi_err
+
+
+/**
+ * Assigns an error name and message corresponding to SSPI return value
+ * code to a DBusError. Does nothing if error is #NULL.
+ * Note that this function can be slow-ish, so only call it when
+ * SSPI returns unexpected status code, which is treated as an error.
+ *
+ * @param error the error.
+ * @param func_call description of the function that produced the status. Can be NULL.
+ * @param status the value returned from a SSPI function
+ */
+void
+_dbus_win_set_error_from_sspi_status (DBusError       *error,
+                                      const char      *func_call,
+                                      SECURITY_STATUS  status)
+{
+  int i;
+  const char *literal;
+
+  /* This is obviously suboptimal, but this function is no invoked when
+   * everything is going fine, so no big deal.
+   */
+  for (literal = NULL, i = 0; dbus_sspi_error_map[i].value != SEC_E_OK; i++)
+    {
+      if (dbus_sspi_error_map[i].value != status)
+        continue;
+
+      literal = dbus_sspi_error_map[i].literal;
+    }
+
+  if (literal == NULL)
+    {
+      literal = "UNRECOGNIZED ERROR CODE";
+    }
+
+  if (func_call)
+    dbus_set_error (error, DBUS_ERROR_FAILED, "%s returned 0x%08lx (%s)", func_call, status, literal);
+  else
+    dbus_set_error (error, DBUS_ERROR_FAILED, "0x%08lx (%s)", status, literal);
+}
+
+void
+_dbus_win_warn_sspi_status (const char      *message,
+                            const char      *func_call,
+                            SECURITY_STATUS  status)
+{
+  DBusError error;
+
+  dbus_error_init (&error);
+  _dbus_win_set_error_from_sspi_status (&error, func_call, status);
+  _dbus_warn ("%s: %s\n", message, error.message);
+  dbus_error_free (&error);
+}
+
 /**
  * Removes a directory; Directory must be empty
  *
@@ -4516,6 +4705,493 @@ _dbus_listen_unix_socket (const char     *path,
 
   return s;
 }
+
+/*
+ * DBUS_WINDOWS_SSPI_NTLM mechanism
+ */
+#ifndef DBUS_WINCE
+
+/* This is needed because SSPI function prototypes claim that they take
+ * non-const provider name, even though there's no reason to modify it.
+ */
+wchar_t ntlm_ssp_name[] = L"NTLM";
+
+/**
+ * Feeds client response to SSPI, producing the next challenge.
+ *
+ * @param sspi_ntlm      - SSPI NTLM context carried by DBusAuth
+ * @param state          - SSPI NTLM state, for recovering from OOM errors
+ * @param data           - inbound client response
+ * @param challenge      - string to fill with the next challenge
+ * @param done           - boolean to set when SSPI authentication succeeded
+ * @param error_is_local - boolean to set when @error is not to be shared
+ * @param error          - an error to send back (optional)
+ *
+ * The @challenge is always valid (even if its length ends up being zero),
+ * as long as the function returns TRUE. The @challenge must be sent back
+ * to the client, then freed with _dbus_string_free().
+ *
+ * @returns #TRUE if everything is OK, @challenge and is @response are valid, #FALSE otherwise
+ */
+dbus_bool_t
+_dbus_sspi_ntlm_next_challenge (DBusSSPINTLMInfo          *sspi_ntlm,
+                                DBusSSPINTLMInternalState *state,
+                                const DBusString          *data,
+                                DBusString                *challenge,
+                                dbus_bool_t               *done,
+                                dbus_bool_t               *error_is_local,
+                                DBusError                 *error)
+{
+  SECURITY_STATUS  ss;
+  PSecPkgInfoW     sec_package_info;
+  TimeStamp        lifetime;
+  SecBuffer        input_sec_buffer = { 0, SECBUFFER_TOKEN, NULL};
+  SecBufferDesc    input_sec_buffers_descriptor = { SECBUFFER_VERSION, 1, &input_sec_buffer };
+  SecBuffer        output_sec_buffer = { 0, SECBUFFER_TOKEN, NULL};
+  SecBufferDesc    output_sec_buffers_descriptor = { SECBUFFER_VERSION, 1, &output_sec_buffer };
+  ULONG            attributes;
+  dbus_bool_t      is_done;
+
+  input_sec_buffer.cbBuffer = _dbus_string_get_length (data);
+  /* SSPI accepts non-const pointer, even though it doesn't write there */
+  input_sec_buffer.pvBuffer = (void *) _dbus_string_get_const_data (data);
+
+  if (*state != DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE)
+    {
+      *error_is_local = TRUE;
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state for getting next challenge");
+
+      return FALSE;
+    }
+
+  if (input_sec_buffer.cbBuffer == 0)
+    {
+      *error_is_local = FALSE;
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Received 0-length DATA, which is unacceptable");
+
+      return FALSE;
+    }
+
+  if (sspi_ntlm->message_limit == 0)
+    {
+      ss = QuerySecurityPackageInfoW (ntlm_ssp_name, &sec_package_info);
+
+      if (ss != SEC_E_OK)
+        {
+          *error_is_local = TRUE;
+          _dbus_win_set_error_from_sspi_status (error, "QuerySecurityPackageInfoW (NTLM)", ss);
+
+          return FALSE;
+        }
+
+      sspi_ntlm->message_limit = sec_package_info->cbMaxToken;
+
+      ss = FreeContextBuffer (sec_package_info);
+
+      if (ss != SEC_E_OK)
+        _dbus_win_warn_sspi_status ("server", "FreeContextBuffer (PSecPkgInfoW)", ss);
+    }
+
+  if (!sspi_ntlm->free_credentials)
+    {
+      ss = AcquireCredentialsHandleW (NULL, ntlm_ssp_name, SECPKG_CRED_INBOUND, 0, 0, 0, 0,
+                                      &sspi_ntlm->credentials, &lifetime);
+
+      if (ss != SEC_E_OK)
+        {
+          *error_is_local = TRUE;
+          _dbus_win_set_error_from_sspi_status (error, "AcquireCredentialsHandleW (NTLM, INBOUND)", ss);
+
+          return FALSE;
+        }
+
+      sspi_ntlm->free_credentials = TRUE;
+    }
+
+  if (!_dbus_string_set_length (challenge, sspi_ntlm->message_limit))
+    return FALSE;
+
+  output_sec_buffer.cbBuffer = _dbus_string_get_length (challenge);
+  output_sec_buffer.pvBuffer = _dbus_string_get_data (challenge);
+
+  ss = AcceptSecurityContext (&sspi_ntlm->credentials,
+                              sspi_ntlm->free_context ? &sspi_ntlm->context : NULL,
+                              &input_sec_buffers_descriptor,
+                              0,
+                              SECURITY_NATIVE_DREP,
+                              &sspi_ntlm->context,
+                              &output_sec_buffers_descriptor,
+                              &attributes,
+                              &lifetime);
+
+  if (ss != SEC_E_OK &&
+      ss != SEC_I_COMPLETE_AND_CONTINUE &&
+      ss != SEC_I_COMPLETE_NEEDED &&
+      ss != SEC_I_CONTINUE_NEEDED)
+    {
+      *error_is_local = TRUE;
+      _dbus_win_set_error_from_sspi_status (error, "AcceptSecurityContext ()", ss);
+
+      return FALSE;
+    }
+
+  sspi_ntlm->free_context = TRUE;
+
+  is_done = !((SEC_I_CONTINUE_NEEDED == ss) || (SEC_I_COMPLETE_AND_CONTINUE == ss));
+
+  if ((SEC_I_COMPLETE_NEEDED == ss) || (SEC_I_COMPLETE_AND_CONTINUE == ss))
+    {
+      ss = CompleteAuthToken (&sspi_ntlm->context,
+                              &output_sec_buffers_descriptor);
+
+      if (ss != SEC_E_OK)
+        {
+          *error_is_local = TRUE;
+          _dbus_win_set_error_from_sspi_status (error, "CompleteAuthToken ()", ss);
+
+          return FALSE;
+        }
+    }
+
+  /* Only shortens the string */
+  _dbus_string_set_length (challenge, output_sec_buffer.cbBuffer);
+
+  *done = is_done;
+
+  return TRUE;
+}
+
+/**
+ * Converts successfully authenticated SSPI security context
+ * attributes into credentials, adding them to DBusCredentials.
+ *
+ * @param sspi_ntlm      - SSPI NTLM context carried by DBusAuth
+ * @param state          - SSPI NTLM state, for recovering from OOM errors
+ * @param credentials    - credentials object to modify
+ * @param error_is_local - boolean to set when @error is not to be shared
+ * @param error          - an error to send back (optional)
+ *
+ * @returns #TRUE if everything is OK and @credentials were modified, #FALSE otherwise
+ */
+dbus_bool_t
+_dbus_sspi_ntlm_fetch_credentials (DBusSSPINTLMInfo          *sspi_ntlm,
+                                   DBusSSPINTLMInternalState *state,
+                                   DBusCredentials           *credentials,
+                                   dbus_bool_t               *error_is_local,
+                                   DBusError                 *error)
+{
+  SECURITY_STATUS  ss;
+  HANDLE           client_token;
+  char            *sid;
+  dbus_bool_t      result;
+
+  if (*state != DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS)
+    {
+      *error_is_local = TRUE;
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state for fetching credentials");
+
+      return FALSE;
+    }
+
+  /* We might lose a bit of performance by re-querying and re-getting the token on every
+   * OOM-induced retry, but there's no state to worry about.
+   */
+
+  ss = QuerySecurityContextToken (&sspi_ntlm->context, &client_token);
+
+  if (ss != SEC_E_OK)
+    {
+      *error_is_local = TRUE;
+      _dbus_win_set_error_from_sspi_status (error, "QuerySecurityContextToken ()", ss);
+
+      return FALSE;
+    }
+
+  result = _dbus_get_token_sid (&sid, client_token, error);
+
+  if (!result)
+    {
+      CloseHandle (client_token);
+      *error_is_local = TRUE;
+
+      return FALSE;
+    }
+
+  result = _dbus_credentials_add_windows_sid (credentials, sid);
+
+  if (!result)
+    {
+      *error_is_local = TRUE;
+      /* _dbus_credentials_add_windows_sid() currently only fails when OOM */
+      _DBUS_SET_OOM (error);
+    }
+
+  LocalFree (sid);
+  CloseHandle (client_token);
+
+  return result;
+}
+
+/**
+ * Cleans up any state initialized by _dbus_sspi_ntlm_*() functions.
+ *
+ * @param sspi_ntlm   - SSPI NTLM context carried by DBusAuth
+ */
+void
+_dbus_sspi_ntlm_free_info (DBusSSPINTLMInfo *sspi_ntlm)
+{
+  if (sspi_ntlm->free_context)
+    DeleteSecurityContext (&sspi_ntlm->context);
+
+  sspi_ntlm->free_context = FALSE;
+
+  if (sspi_ntlm->free_credentials)
+    FreeCredentialHandle (&sspi_ntlm->credentials);
+
+  sspi_ntlm->free_credentials = FALSE;
+}
+
+/**
+ * Generates initial client response for SSPI NTLM authentication and
+ * appends it to @initial_response.
+ *
+ * @param sspi_ntlm        - SSPI NTLM context carried by DBusAuth
+ * @param state            - SSPI NTLM state, for recovering from OOM errors
+ * @param initial_response - outbound data to append the response to
+ * @param error            - an error to send back (optional)
+ *
+ * @returns #TRUE if everything is OK and @initial_response was modified, #FALSE otherwise
+ */
+dbus_bool_t
+_dbus_sspi_ntlm_initial_response (DBusSSPINTLMInfo          *sspi_ntlm,
+                                  DBusSSPINTLMInternalState *state,
+                                  DBusString                *initial_response,
+                                  DBusError                 *error)
+{
+  SECURITY_STATUS ss;
+  PSecPkgInfoW    sec_package_info;
+  TimeStamp       lifetime;
+  SecBuffer       output_sec_buffer = { 0, SECBUFFER_TOKEN, NULL};
+  SecBufferDesc   output_sec_buffers_descriptor = { SECBUFFER_VERSION, 1, &output_sec_buffer };
+  ULONG           attributes;
+  DBusString      plaintext;
+  dbus_bool_t     result;
+
+  if (*state != DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN)
+    {
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state for getting initial challenge");
+
+      return FALSE;
+    }
+
+  if (sspi_ntlm->message_limit == 0)
+    {
+      ss = QuerySecurityPackageInfoW (ntlm_ssp_name, &sec_package_info);
+
+      if (ss != SEC_E_OK)
+        {
+          _dbus_win_set_error_from_sspi_status (error, "QuerySecurityPackageInfoW ()", ss);
+
+          return FALSE;
+        }
+
+      sspi_ntlm->message_limit = sec_package_info->cbMaxToken;
+
+      ss = FreeContextBuffer (sec_package_info);
+
+      if (ss != SEC_E_OK)
+        _dbus_win_warn_sspi_status ("client", "FreeContextBuffer (PSecPkgInfoW)", ss);
+    }
+
+  if (!sspi_ntlm->free_credentials)
+    {
+      ss = AcquireCredentialsHandleW (NULL, ntlm_ssp_name, SECPKG_CRED_OUTBOUND, 0, 0, 0, 0,
+                                      &sspi_ntlm->credentials, &lifetime);
+
+      if (ss != SEC_E_OK)
+        {
+          _dbus_win_set_error_from_sspi_status (error, "AcquireCredentialsHandleW (NTLM, OUTBOUND)", ss);
+
+          return FALSE;
+        }
+
+      sspi_ntlm->free_credentials = TRUE;
+    }
+
+  if (!_dbus_string_init_preallocated (&plaintext, sspi_ntlm->message_limit))
+    {
+      _DBUS_SET_OOM (error);
+
+      return FALSE;
+    }
+
+  _dbus_string_set_length (&plaintext, sspi_ntlm->message_limit);
+
+  output_sec_buffer.cbBuffer = _dbus_string_get_length (&plaintext);
+  output_sec_buffer.pvBuffer = _dbus_string_get_data (&plaintext);
+
+  /* We might lose some performance by re-initializing and the context on every
+   * OOM-induced retry, but if we clean it up on OOM, this function becomes stateless,
+   * which is nice.
+   */
+
+  ss = InitializeSecurityContextW (&sspi_ntlm->credentials,
+                                   NULL,
+                                   NULL,
+                                   ISC_REQ_IDENTIFY,
+                                   0,
+                                   SECURITY_NATIVE_DREP,
+                                   NULL,
+                                   0,
+                                   &sspi_ntlm->context,
+                                   &output_sec_buffers_descriptor,
+                                   &attributes,
+                                   &lifetime);
+
+  if (ss != SEC_E_OK &&
+      ss != SEC_I_COMPLETE_AND_CONTINUE &&
+      ss != SEC_I_COMPLETE_NEEDED &&
+      ss != SEC_I_CONTINUE_NEEDED)
+    {
+      _dbus_win_set_error_from_sspi_status (error, "InitializeSecurityContextW ()", ss);
+      _dbus_string_free (&plaintext);
+
+      return FALSE;
+    }
+
+  sspi_ntlm->free_context = TRUE;
+
+  if ((SEC_I_COMPLETE_NEEDED == ss) || (SEC_I_COMPLETE_AND_CONTINUE == ss))
+    {
+      ss = CompleteAuthToken (&sspi_ntlm->context,
+                              &output_sec_buffers_descriptor);
+
+      if (ss != SEC_E_OK)
+        {
+          _dbus_win_set_error_from_sspi_status (error, "CompleteAuthToken ()", ss);
+          _dbus_string_free (&plaintext);
+          DeleteSecurityContext (&sspi_ntlm->context);
+          sspi_ntlm->free_context = FALSE;
+
+          return FALSE;
+        }
+    }
+
+  /* Only shortens the string */
+  _dbus_string_set_length (&plaintext, output_sec_buffer.cbBuffer);
+
+  result = _dbus_string_hex_encode (&plaintext, 0, initial_response,
+                                    _dbus_string_get_length (initial_response));
+
+  if (!result)
+    {
+      DeleteSecurityContext (&sspi_ntlm->context);
+      sspi_ntlm->free_context = FALSE;
+      _DBUS_SET_OOM (error);
+    }
+
+  _dbus_string_free (&plaintext);
+
+  return result;
+}
+
+/**
+ * Feeds server challenge to SSPI, producing the next response.
+ *
+ * @param sspi_ntlm      - SSPI NTLM context carried by DBusAuth
+ * @param state          - SSPI NTLM state, for recovering from OOM errors
+ * @param data           - inbound server challenge
+ * @param response       - string to fill with the next response
+ * @param error_is_local - boolean to set when @error is not to be shared
+ * @param error          - an error to send back (optional)
+ *
+ * @returns #TRUE if everything is OK and @response are valid, #FALSE otherwise
+ */
+dbus_bool_t
+_dbus_sspi_ntlm_next_response (DBusSSPINTLMInfo          *sspi_ntlm,
+                               DBusSSPINTLMInternalState *state,
+                               const DBusString          *data,
+                               DBusString                *response,
+                               dbus_bool_t               *error_is_local,
+                               DBusError                 *error)
+{
+  SECURITY_STATUS ss;
+  TimeStamp       lifetime;
+  SecBuffer       input_sec_buffer = { 0, SECBUFFER_TOKEN, NULL};
+  SecBufferDesc   input_sec_buffers_descriptor = { SECBUFFER_VERSION, 1, &input_sec_buffer };
+  SecBuffer       output_sec_buffer = { 0, SECBUFFER_TOKEN, NULL};
+  SecBufferDesc   output_sec_buffers_descriptor = { SECBUFFER_VERSION, 1, &output_sec_buffer };
+  ULONG           attributes;
+
+  input_sec_buffer.cbBuffer = _dbus_string_get_length (data);
+  /* SSPI accepts non-const pointer, even though it doesn't write there */
+  input_sec_buffer.pvBuffer = (void *) _dbus_string_get_const_data (data);
+
+  if (*state != DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE)
+    {
+      *error_is_local = TRUE;
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state for getting next response");
+
+      return FALSE;
+    }
+
+  if (input_sec_buffer.cbBuffer == 0)
+    {
+      *error_is_local = FALSE;
+      dbus_set_error_const (error, DBUS_ERROR_FAILED, "Received 0-length DATA, which is unacceptable");
+
+      return FALSE;
+    }
+
+  if (!_dbus_string_set_length (response, sspi_ntlm->message_limit))
+    return FALSE;
+
+  output_sec_buffer.cbBuffer = _dbus_string_get_length (response);
+  output_sec_buffer.pvBuffer = _dbus_string_get_data (response);
+
+  ss = InitializeSecurityContextW (&sspi_ntlm->credentials,
+                                   &sspi_ntlm->context,
+                                   NULL,
+                                   ISC_REQ_IDENTIFY,
+                                   0,
+                                   SECURITY_NATIVE_DREP,
+                                   &input_sec_buffers_descriptor,
+                                   0,
+                                   &sspi_ntlm->context,
+                                   &output_sec_buffers_descriptor,
+                                   &attributes,
+                                   &lifetime);
+
+  if (ss != SEC_E_OK &&
+      ss != SEC_I_COMPLETE_AND_CONTINUE &&
+      ss != SEC_I_COMPLETE_NEEDED &&
+      ss != SEC_I_CONTINUE_NEEDED)
+    {
+      *error_is_local = TRUE;
+      _dbus_win_set_error_from_sspi_status (error, "InitializeSecurityContextW ()", ss);
+
+      return FALSE;
+    }
+
+  if ((SEC_I_COMPLETE_NEEDED == ss) || (SEC_I_COMPLETE_AND_CONTINUE == ss))
+    {
+      ss = CompleteAuthToken (&sspi_ntlm->context,
+                              &output_sec_buffers_descriptor);
+
+      if (ss != SEC_E_OK)
+        {
+          *error_is_local = TRUE;
+          _dbus_win_set_error_from_sspi_status (error, "CompleteAuthToken ()", ss);
+
+          return FALSE;
+        }
+    }
+
+  _dbus_string_set_length (response, output_sec_buffer.cbBuffer);
+
+  return TRUE;
+}
+#endif
 
 /** @} end of sysdeps-win */
 /* tests in dbus-sysdeps-util.c */

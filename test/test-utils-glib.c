@@ -259,6 +259,9 @@ spawn_dbus_daemon (const gchar *binary,
 
   g_ptr_array_add (argv, NULL);
 
+  test_dump_args(argv);
+  test_dump_env(envp);
+
   g_spawn_async_with_pipes (NULL, /* working directory */
       (gchar **) argv->pdata,
       envp,
@@ -1046,4 +1049,19 @@ test_get_helper_executable (const gchar *exe)
     return NULL;
 
   return g_build_filename (dbus_test_exec, exe, NULL);
+}
+
+void test_dump_args (const GPtrArray *argv)
+{
+  for (guint i = 0; i < argv->len; i++)
+    {
+      gchar *str = g_ptr_array_index(argv, i);
+      g_print ("argv[%d] = %s\n", i, str);
+    }
+}
+
+void test_dump_env (gchar **env)
+{
+  for (gint i = 0; env[i] != NULL; i++)
+    g_print ("env: %s\n", env[i]);
 }

@@ -28,6 +28,8 @@
 #ifndef DBUS_SYSDEPS_WIN_H
 #define DBUS_SYSDEPS_WIN_H
 
+#define SECURITY_WIN32
+
 extern void *_dbus_win_get_dll_hmodule (void);
 #define WIN32_LEAN_AND_MEAN
 
@@ -38,6 +40,11 @@ extern void *_dbus_win_get_dll_hmodule (void);
 #include <malloc.h>
 #include <windows.h>
 #undef interface
+
+#ifndef DBUS_WINCE
+#include <sspi.h>
+#include <sddl.h>
+#endif
 
 #define DBUS_CONSOLE_DIR "/var/run/console/"
 
@@ -88,7 +95,93 @@ DBUS_PRIVATE_EXPORT
 dbus_bool_t _dbus_get_install_root (DBusString *str);
 
 DBUS_PRIVATE_EXPORT
-dbus_bool_t _dbus_getsid(char **sid, dbus_pid_t process_id);
+dbus_bool_t _dbus_getsid        (char       **sid,
+                                 dbus_pid_t   process_id);
+
+DBUS_PRIVATE_EXPORT
+dbus_bool_t _dbus_get_token_sid (char       **sid,
+                                 HANDLE       token,
+                                 DBusError   *error);
+
+/** Information for SSPI NTLM authentication */
+typedef struct DBusSSPINTLMInfo DBusSSPINTLMInfo;
+
+/**
+ * Information for SSPI NTLM authentication
+ */
+struct DBusSSPINTLMInfo
+{
+#ifndef DBUS_WINCE
+  CredHandle    credentials;          /**< SSPI Credentials. */
+  CtxtHandle    context;              /**< SSPI Context. */
+  size_t        message_limit;        /**< Maximum size of an SSPI NTLM message. */
+  char         *output_buffer;        /**< Pre-allocated buffer for an SSPI NTLM message. */
+  unsigned int  free_credentials : 1; /**< Must free credentials on shutdown */
+  unsigned int  free_context : 1;     /**< Must free context on shutdown */
+#endif
+};
+
+/**
+ * Representation of the internal state of SSPI NTLM implementation.
+ * Because we have no control over the internal state of NTLM SSP,
+ * we can't just return FALSE in case of out-of-memory errors and
+ * then expect to re-run the function later. We need to remember
+ * which state the SSP is in, to avoid calling SSPI functions
+ * multiple times with the same arguments, which will lead to an error.
+ */
+typedef enum
+{
+  DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_RESPONSE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE,
+  DBUS_SSPI_NTLM_INTERNAL_STATE_INVALID = -1
+} DBusSSPINTLMInternalState;
+
+
+void _dbus_win_set_error_from_sspi_status (DBusError       *error,
+                                           const char      *func_call,
+                                           SECURITY_STATUS  status);
+void _dbus_win_warn_sspi_status           (const char      *message,
+                                           const char      *func_call,
+                                           SECURITY_STATUS  status);
+
+dbus_bool_t _dbus_sspi_ntlm_next_challenge    (DBusSSPINTLMInfo          *sspi_ntlm,
+                                               DBusSSPINTLMInternalState *state,
+                                               const DBusString          *data,
+                                               DBusString                *challenge,
+                                               dbus_bool_t               *done,
+                                               dbus_bool_t               *error_is_local,
+                                               DBusError                 *error);
+
+dbus_bool_t _dbus_sspi_ntlm_fetch_credentials (DBusSSPINTLMInfo          *sspi_ntlm,
+                                               DBusSSPINTLMInternalState *state,
+                                               DBusCredentials           *credentials,
+                                               dbus_bool_t               *error_is_local,
+                                               DBusError                 *error);
+
+dbus_bool_t _dbus_sspi_ntlm_initial_response  (DBusSSPINTLMInfo          *sspi_ntlm,
+                                               DBusSSPINTLMInternalState *state,
+                                               DBusString                *initial_response,
+                                               DBusError                 *error);
+
+dbus_bool_t _dbus_sspi_ntlm_next_response     (DBusSSPINTLMInfo          *sspi_ntlm,
+                                               DBusSSPINTLMInternalState *state,
+                                               const DBusString          *data,
+                                               DBusString                *response,
+                                               dbus_bool_t               *error_is_local,
+                                               DBusError                 *error);
+
+void        _dbus_sspi_ntlm_free_info         (DBusSSPINTLMInfo *sspi_ntlm);
+
 
 HANDLE      _dbus_spawn_program (const char *name,
                                  char **argv,

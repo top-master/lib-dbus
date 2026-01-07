@@ -179,6 +179,16 @@ struct DBusAuth
   DBusKeyring *keyring;             /**< Keyring for cookie mechanism. */
   int cookie_id;                    /**< ID of cookie to use */
   DBusString challenge;             /**< Challenge sent to client */
+  DBusString response;              /**< Response sent to server */
+
+#if defined (DBUS_WIN) && !defined (DBUS_WINCE)
+  DBusSSPINTLMInfo sspi_ntlm;       /**< defined in sysdeps-win.c. */
+  unsigned int inbound_message_count; /**< Number of inbound messages. */
+  unsigned int outbound_message_count; /**< Number of outbound messages. */
+  DBusSSPINTLMInternalState sspi_ntlm_state; /**< defined in sysdeps-win.h */
+  DBusError sspi_ntlm_error;        /**< error (might need to be sent repeatedly) */
+  dbus_bool_t sspi_ntlm_done;       /**< whether SSPI finished the auth or not */
+#endif
 
   char **allowed_mechs;             /**< Mechanisms we're allowed to use,
                                      * or #NULL if we can use any
@@ -391,9 +401,14 @@ _dbus_auth_new (int size)
   auth->desired_identity = _dbus_credentials_new ();
   if (auth->desired_identity == NULL)
     goto enomem_8;
+
+  if (!_dbus_string_init (&auth->response))
+    goto enomem_10;
   
   return auth;
 
+ enomem_10:
+  _dbus_string_free (&auth->response);
 #if 0
  enomem_9:
   _dbus_credentials_unref (auth->desired_identity);
@@ -1382,9 +1397,445 @@ handle_client_shutdown_anonymous_mech (DBusAuth *auth)
   
 }
 
+/*
+ * DBUS_WINDOWS_SSPI_NTLM mechanism
+ * Implementation is mostly in dbus-systeps-win.c
+ */
+#if defined (DBUS_WIN) && !defined (DBUS_WINCE)
+#define NTLM_CLIENT_OUTBOUND_COUNT 2
+#define NTLM_SERVER_OUTBOUND_COUNT 1
+
+static dbus_bool_t
+handle_server_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
+                                           const DBusString *data)
+{
+  dbus_bool_t error_is_local = TRUE;
+
+  switch (auth->sspi_ntlm_state)
+    {
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED:
+      if (!send_rejected (auth))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR:
+      if (!send_error (auth, auth->sspi_ntlm_error.message))
+        return FALSE;
+
+      dbus_error_free (&auth->sspi_ntlm_error);
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE:
+      if (!send_data (auth, &auth->challenge))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE;
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_INVALID:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_RESPONSE:
+    default:
+      break;
+    }
+
+  switch (auth->sspi_ntlm_state)
+    {
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
+      auth->outbound_message_count = 0;
+      auth->inbound_message_count = 0;
+      auth->inbound_message_count += 1;
+
+      if (auth->inbound_message_count > NTLM_CLIENT_OUTBOUND_COUNT)
+        goto ntlm_server_message_number_mismatch;
+
+      _dbus_string_set_length (&auth->challenge, 0);
+      auth->sspi_ntlm_done = FALSE;
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE:
+      if (!_dbus_sspi_ntlm_next_challenge (&auth->sspi_ntlm,
+                                           &auth->sspi_ntlm_state,
+                                           data,
+                                           &auth->challenge,
+                                           &auth->sspi_ntlm_done,
+                                           &error_is_local,
+                                           &auth->sspi_ntlm_error))
+        {
+          _DBUS_ASSERT_ERROR_IS_SET (&auth->sspi_ntlm_error);
+
+          if (dbus_error_has_name (&auth->sspi_ntlm_error, DBUS_ERROR_NO_MEMORY))
+            {
+              dbus_error_free (&auth->sspi_ntlm_error);
+              /* sspi_ntlm_state was modified by the next_challenge(), don't touch it */
+
+              return FALSE;
+            }
+
+          _dbus_verbose ("%s: Error getting next challenge: %s\n",
+                         DBUS_AUTH_NAME (auth), auth->sspi_ntlm_error.message);
+          dbus_error_free (&auth->sspi_ntlm_error);
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+          if (!send_rejected (auth))
+            return FALSE;
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+          return TRUE;
+        }
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE:
+      if (_dbus_string_get_length (&auth->challenge) > 0)
+        {
+          auth->outbound_message_count += 1;
+
+          if (auth->outbound_message_count > NTLM_SERVER_OUTBOUND_COUNT)
+            goto ntlm_server_message_number_mismatch;
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE;
+
+          if (!send_data (auth, &auth->challenge))
+            return FALSE;
+        }
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE:
+      if (!auth->sspi_ntlm_done)
+        {
+          if (_dbus_string_get_length (&auth->challenge) == 0)
+            {
+              _dbus_verbose ("%s: SSPI produced 0-length challenge, but authentication is not done yet\n",
+                             DBUS_AUTH_NAME (auth));
+
+              auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+              if (!send_rejected (auth))
+                return FALSE;
+
+              auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+              return TRUE;
+            }
+
+          goto_state (auth, &server_state_waiting_for_data);
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+          return TRUE;
+        }
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS:
+      error_is_local = TRUE;
+
+      if (!_dbus_sspi_ntlm_fetch_credentials (&auth->sspi_ntlm,
+                                              &auth->sspi_ntlm_state,
+                                              auth->authorized_identity,
+                                              &error_is_local,
+                                              &auth->sspi_ntlm_error))
+        {
+          _DBUS_ASSERT_ERROR_IS_SET (&auth->sspi_ntlm_error);
+
+          if (dbus_error_has_name (&auth->sspi_ntlm_error, DBUS_ERROR_NO_MEMORY))
+            {
+              dbus_error_free (&auth->sspi_ntlm_error);
+
+              return FALSE;
+            }
+
+          _dbus_verbose ("%s: Error fetching NTLM-negotiated credentials: %s\n",
+                         DBUS_AUTH_NAME (auth), auth->sspi_ntlm_error.message);
+          dbus_error_free (&auth->sspi_ntlm_error);
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+          if (!send_rejected (auth))
+            return FALSE;
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+          return TRUE;
+        }
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK:
+      if (!send_ok (auth))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      _dbus_verbose ("%s: authenticated client using DBUS_WINDOWS_SSPI_NTLM\n",
+                     DBUS_AUTH_NAME (auth));
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_INVALID:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_RESPONSE:
+    default:
+      _dbus_verbose ("%s: Wrong SSPI NTLM state\n",
+                     DBUS_AUTH_NAME (auth));
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+      if (!send_rejected (auth))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+  }
+
+ntlm_server_message_number_mismatch:
+  _dbus_verbose ("%s: Server expected to send/receive %u/%u SSPI buffers, but sent/received %u/%u instead",
+                 DBUS_AUTH_NAME (auth),
+                 NTLM_SERVER_OUTBOUND_COUNT, NTLM_CLIENT_OUTBOUND_COUNT,
+                 auth->outbound_message_count, auth->inbound_message_count);
+  auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+  if (send_rejected (auth))
+    {
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+    }
+
+  return FALSE;
+}
+
+static void
+handle_server_shutdown_windows_sspi_ntlm_mech (DBusAuth *auth)
+{
+  _dbus_sspi_ntlm_free_info (&auth->sspi_ntlm);
+}
+
+static dbus_bool_t
+handle_client_initial_response_windows_sspi_ntlm_mech (DBusAuth         *auth,
+                                                       DBusString       *response)
+{
+  auth->outbound_message_count = 0;
+  auth->inbound_message_count = 0;
+
+  if (_dbus_sspi_ntlm_initial_response (&auth->sspi_ntlm,
+                                        &auth->sspi_ntlm_state,
+                                        response,
+                                        &auth->sspi_ntlm_error))
+    {
+      /* This is the first message we send, so no message count check here */
+      auth->outbound_message_count += 1;
+
+      return TRUE;
+    }
+
+  _DBUS_ASSERT_ERROR_IS_SET (&auth->sspi_ntlm_error);
+
+  if (!dbus_error_has_name (&auth->sspi_ntlm_error, DBUS_ERROR_NO_MEMORY))
+    _dbus_verbose ("%s: Error getting initial response: %s\n",
+                   DBUS_AUTH_NAME (auth), auth->sspi_ntlm_error.message);
+
+  dbus_error_free (&auth->sspi_ntlm_error);
+  /* initial_response is stateless, so this is always OK */
+  auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+  /* This is not an OOM error, but we can't return TRUE */
+  return FALSE;
+}
+
+static dbus_bool_t
+handle_client_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
+                                           const DBusString *data)
+{
+  dbus_bool_t error_is_local = TRUE;
+
+  switch (auth->sspi_ntlm_state)
+    {
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR:
+      if (!send_error (auth, auth->sspi_ntlm_error.message))
+        return FALSE;
+
+      dbus_error_free (&auth->sspi_ntlm_error);
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_RESPONSE:
+      if (!send_data (auth, &auth->response))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_INVALID:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK:
+    default:
+      break;
+    }
+
+  switch (auth->sspi_ntlm_state)
+    {
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
+      auth->inbound_message_count += 1;
+
+      if (auth->inbound_message_count > NTLM_SERVER_OUTBOUND_COUNT)
+        goto ntlm_client_message_number_mismatch;
+
+      _dbus_string_set_length (&auth->response, 0);
+
+      auth->sspi_ntlm_done = FALSE;
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_GET_NEXT_RESPONSE:
+
+      if (!_dbus_sspi_ntlm_next_response (&auth->sspi_ntlm,
+                                          &auth->sspi_ntlm_state,
+                                          data,
+                                          &auth->response,
+                                          &error_is_local,
+                                          &auth->sspi_ntlm_error))
+        {
+          _DBUS_ASSERT_ERROR_IS_SET (&auth->sspi_ntlm_error);
+
+          if (dbus_error_has_name (&auth->sspi_ntlm_error, DBUS_ERROR_NO_MEMORY))
+            {
+              dbus_error_free (&auth->sspi_ntlm_error);
+              /* sspi_ntlm_state was modified by the next_response(), don't touch it */
+
+              return FALSE;
+            }
+
+          if (error_is_local)
+            {
+              _dbus_verbose ("%s: Error getting response: %s\n",
+                             DBUS_AUTH_NAME (auth), auth->sspi_ntlm_error.message);
+              dbus_error_free (&auth->sspi_ntlm_error);
+              dbus_set_error_const (&auth->sspi_ntlm_error, DBUS_ERROR_FAILED, "Failed to get next response due to internal error");
+            }
+
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR;
+
+          if (!send_error (auth, auth->sspi_ntlm_error.message))
+            return FALSE;
+
+          dbus_error_free (&auth->sspi_ntlm_error);
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+          return TRUE;
+        }
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE;
+      /* fallthrough */
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_CLIENT_DATA_MAYBE_SEND_RESPONSE:
+      if (_dbus_string_get_length (&auth->response) > 0)
+        {
+          auth->outbound_message_count += 1;
+
+          if (auth->outbound_message_count > NTLM_CLIENT_OUTBOUND_COUNT)
+            goto ntlm_client_message_number_mismatch;
+
+          if (!send_data (auth, &auth->response))
+            return FALSE;
+        }
+      else
+        {
+          /* SSPI gave us nothing to send to the server, so assume
+           * we're done and wait for OK.
+           */
+          goto_state (auth, &client_state_waiting_for_ok);
+          auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+        }
+
+      return TRUE;
+
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_CHECK_IF_DONE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_GET_NEXT_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_MAYBE_SEND_CHALLENGE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_FETCH_CREDENTIALS:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SERVER_DATA_SEND_OK:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_RESPONSE:
+    case DBUS_SSPI_NTLM_INTERNAL_STATE_INVALID:
+    default:
+      dbus_error_free (&auth->sspi_ntlm_error);
+      dbus_set_error_const (&auth->sspi_ntlm_error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state");
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR;
+
+      if (!send_error (auth, auth->sspi_ntlm_error.message))
+        return FALSE;
+
+      dbus_error_free (&auth->sspi_ntlm_error);
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
+  }
+
+ntlm_client_message_number_mismatch:
+  dbus_set_error (&auth->sspi_ntlm_error, DBUS_ERROR_FAILED,
+                  "Client expected to send/receive %u/%u SSPI buffers, but sent/received %u/%u instead",
+                  NTLM_CLIENT_OUTBOUND_COUNT, NTLM_SERVER_OUTBOUND_COUNT,
+                  auth->outbound_message_count, auth->inbound_message_count);
+  auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR;
+
+  if (!send_error (auth, auth->sspi_ntlm_error.message))
+    return FALSE;
+
+  dbus_error_free (&auth->sspi_ntlm_error);
+  auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+  return TRUE;
+}
+
+static void
+handle_client_shutdown_windows_sspi_ntlm_mech (DBusAuth *auth)
+{
+  _dbus_sspi_ntlm_free_info (&auth->sspi_ntlm);
+}
+#endif
+
 /* Put mechanisms here in order of preference.
  * Right now we have:
  *
+ * - DBUS_WINDOWS_SSPI_NTLM uses Windows SSPI API to perform NTLM authentication
  * - EXTERNAL checks socket credentials (or in the future, other info from the OS)
  * - DBUS_COOKIE_SHA1 uses a cookie in the home directory, like xauth or ICE
  * - ANONYMOUS checks nothing but doesn't auth the person as a user
@@ -1395,6 +1846,16 @@ handle_client_shutdown_anonymous_mech (DBusAuth *auth)
  */
 static const DBusAuthMechanismHandler
 all_mechanisms[] = {
+#if defined (DBUS_WIN) && !defined (DBUS_WINCE)
+  { "DBUS_WINDOWS_SSPI_NTLM",
+    handle_server_data_windows_sspi_ntlm_mech,
+    NULL, NULL,
+    handle_server_shutdown_windows_sspi_ntlm_mech,
+    handle_client_initial_response_windows_sspi_ntlm_mech,
+    handle_client_data_windows_sspi_ntlm_mech,
+    NULL, NULL,
+    handle_client_shutdown_windows_sspi_ntlm_mech },
+#endif
   { "EXTERNAL",
     handle_server_data_external_mech,
     NULL, NULL,
@@ -2486,6 +2947,7 @@ _dbus_auth_unref (DBusAuth *auth)
         _dbus_keyring_unref (auth->keyring);
 
       _dbus_string_free (&auth->context);
+      _dbus_string_free (&auth->response);
       _dbus_string_free (&auth->challenge);
       _dbus_string_free (&auth->identity);
       _dbus_string_free (&auth->incoming);
@@ -2496,7 +2958,11 @@ _dbus_auth_unref (DBusAuth *auth)
       _dbus_credentials_unref (auth->credentials);
       _dbus_credentials_unref (auth->authorized_identity);
       _dbus_credentials_unref (auth->desired_identity);
-      
+
+#if defined (DBUS_WIN) && !defined (DBUS_WINCE)
+      dbus_error_free (&auth->sspi_ntlm_error);
+#endif
+
       dbus_free (auth);
     }
 }
