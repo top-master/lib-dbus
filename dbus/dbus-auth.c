@@ -1444,19 +1444,6 @@ handle_server_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
 
   switch (auth->sspi_ntlm_state)
     {
-    default:
-      _dbus_verbose ("%s: Wrong SSPI NTLM state\n",
-                     DBUS_AUTH_NAME (auth));
-
-      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
-
-      if (!send_rejected (auth))
-        return FALSE;
-
-      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
-
-      return TRUE;
-
     case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
       auth->outbound_message_count = 0;
       auth->inbound_message_count = 0;
@@ -1594,6 +1581,19 @@ handle_server_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
       _dbus_verbose ("%s: authenticated client using DBUS_WINDOWS_SSPI_NTLM\n",
                      DBUS_AUTH_NAME (auth));
       return TRUE;
+
+    default:
+      _dbus_verbose ("%s: Wrong SSPI NTLM state\n",
+                     DBUS_AUTH_NAME (auth));
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_REJECTED;
+
+      if (!send_rejected (auth))
+        return FALSE;
+
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
+
+      return TRUE;
   }
 
 ntlm_server_message_number_mismatch:
@@ -1682,19 +1682,6 @@ handle_client_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
 
   switch (auth->sspi_ntlm_state)
     {
-    default:
-      dbus_error_free (&auth->sspi_ntlm_error);
-      dbus_set_error_const (&auth->sspi_ntlm_error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state");
-      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR;
-
-      if (!send_error (auth, auth->sspi_ntlm_error.message))
-        return FALSE;
-
-      dbus_error_free (&auth->sspi_ntlm_error);
-      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
-
-      return TRUE;
-
     case DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN:
       auth->inbound_message_count += 1;
 
@@ -1767,6 +1754,19 @@ handle_client_data_windows_sspi_ntlm_mech (DBusAuth         *auth,
           goto_state (auth, &client_state_waiting_for_ok);
           auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
         }
+
+      return TRUE;
+
+    default:
+      dbus_error_free (&auth->sspi_ntlm_error);
+      dbus_set_error_const (&auth->sspi_ntlm_error, DBUS_ERROR_FAILED, "Wrong SSPI NTLM state");
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_SEND_ERROR;
+
+      if (!send_error (auth, auth->sspi_ntlm_error.message))
+        return FALSE;
+
+      dbus_error_free (&auth->sspi_ntlm_error);
+      auth->sspi_ntlm_state = DBUS_SSPI_NTLM_INTERNAL_STATE_CLEAN;
 
       return TRUE;
   }
