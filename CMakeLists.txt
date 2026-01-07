@@ -306,7 +306,6 @@ else()
         strict-aliasing
         strict-prototypes
         switch-default
-        switch-enum
         undef
         unused-but-set-variable
         write-strings
@@ -325,6 +324,7 @@ else()
         unused-parameter
     )
     set(WARNINGS_ERRORS
+        switch-enum
     )
     if(ENABLE_WERROR)
         list(APPEND WARNINGS error)
