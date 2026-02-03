@@ -555,16 +555,26 @@ endif
 data_config.set('SYSTEMCTL', systemctl)
 
 elogind_opt = get_option('elogind')
+seatd_opt = get_option('seatd')
 if use_systemd
     if elogind_opt.enabled()
         error('-Dsystemd and -Delogind are mutually exclusive')
+    elif seatd_opt.enabled()
+        error('-Dsystemd and -Dseatd are mutually exclusive')
     endif
     elogind = dependency('', required: false)
+    seatd = dependency('', required: false)
 else
+    if elogind_opt.enabled() and seatd_opt.enabled()
+        error('-Delogind and -Dseatd are mutually exclusive')
+    endif
     elogind = dependency('libelogind', version: '>=209', required: elogind_opt)
+    seatd = dependency('libseat', required: seatd_opt)
 endif
 use_elogind = elogind.found()
 config.set('HAVE_ELOGIND', use_elogind)
+use_seatd = seatd.found()
+config.set('HAVE_SEATD', use_seatd)
 
 
 use_traditional_activation = message_bus and get_option('traditional_activation')
@@ -1433,6 +1443,7 @@ summary_dict += {
     'Building kqueue support':  use_kqueue,
     'Building systemd support': use_systemd,
     'Building elogind support': use_elogind,
+    'Building seatd support':   use_seatd,
     'Traditional activation':   use_traditional_activation,
     'Building X11 code':        config.get('DBUS_BUILD_X11'),
     'Building Doxygen docs':    doxygen.found(),
