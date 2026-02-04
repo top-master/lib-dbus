@@ -4606,6 +4606,53 @@ _dbus_lookup_session_address_launchd (dbus_bool_t *supported,
 }
 #endif
 
+#ifdef HAVE_SEATD
+static dbus_bool_t
+_dbus_lookup_session_address_seatd (dbus_bool_t *supported,
+                                    DBusString  *address,
+                                    DBusError   *error)
+{
+  int seatd_fd = -1;
+  struct seatd_seat *seat = NULL;
+
+  if (_dbus_check_setuid ())
+    {
+      dbus_set_error_const (error, DBUS_ERROR_NOT_SUPPORTED,
+                            "Unable to get seatd socket when setuid");
+      return FALSE;
+    }
+
+  seatd_fd = seatd_open_seat(&seat);
+  if (seatd_fd < 0)
+    {
+      _dbus_verbose ("Could not open seatd seat: %s\n", strerror(-seatd_fd));
+      *supported = FALSE;
+      return TRUE;
+    }
+
+  seatd_close_seat(seat);
+  close(seatd_fd);
+
+  const char *seatd_sock = getenv("SEATD_SOCK");
+  if (seatd_sock == NULL)
+    {
+      _dbus_verbose ("SEATD_SOCK not in environment");
+      *supported = FALSE;
+      return TRUE;
+    }
+
+  if (!_dbus_string_append (address, "unix:path=") ||
+      !_dbus_string_append (address, seatd_sock))
+    {
+      _DBUS_SET_OOM (error);
+      return FALSE;
+    }
+
+  *supported = TRUE;
+  return TRUE;
+}
+#endif
+
 static dbus_bool_t
 _dbus_lookup_user_bus (dbus_bool_t *supported,
                        DBusString  *address,
@@ -4706,6 +4753,13 @@ _dbus_lookup_session_address (dbus_bool_t *supported,
   return _dbus_lookup_session_address_launchd (supported, address, error);
 #else
   *supported = FALSE;
+
+#ifdef HAVE_SEATD
+  if (!_dbus_lookup_session_address_seatd (supported, address, error))
+    return FALSE;
+  else if (*supported)
+    return TRUE;
+#endif
 
   if (!_dbus_lookup_user_bus (supported, address, error))
     return FALSE;
