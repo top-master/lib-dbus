@@ -1,4 +1,11 @@
 <?xml version="1.0"?>
+
+<!--
+SPDX-FileCopyrightText: (c) 2003 Red Hat, Inc.
+
+SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
+-->
+
 <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog" prefer="public">
     <public publicId="-//freedesktop//DTD D-BUS Object Introspection 1.0//EN" uri="@DBUS_DTD_DIR@/introspect.dtd"/>
 
