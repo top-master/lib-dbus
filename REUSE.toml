@@ -7,3 +7,21 @@ path = ["subprojects/**.wrap"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = ["© 2022-2023 Meson contributors"]
 SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  "test/data/auth/external-username.auth-script",
+  "test/data/auth/external-auto.auth-script"
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["Copyright © 2018 Collabora Ltd"]
+SPDX-License-Identifier = "AFL-2.1 OR GPL-2.0-or-later"
+
+[[annotations]]
+path = [
+  "test/data/auth/cookie-sha1-username.auth-script",
+  "test/data/auth/cookie-sha1.auth-script"
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["Copyright © 2019 Collabora Ltd"]
+SPDX-License-Identifier = "AFL-2.1 OR GPL-2.0-or-later"
