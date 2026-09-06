@@ -103,6 +103,13 @@ option(
 )
 
 option(
+  'seatd',
+  type: 'feature',
+  value: 'disabled',
+  description: 'Use seatd for detecting user sessions'
+)
+
+option(
   'epoll',
   type: 'feature',
   value: 'auto',

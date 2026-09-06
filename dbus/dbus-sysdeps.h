@@ -304,8 +304,10 @@ dbus_bool_t _dbus_unix_groups_from_uid          (dbus_uid_t         uid,
                                                  dbus_gid_t       **group_ids,
                                                  int               *n_group_ids,
                                                  DBusError         *error);
+#if defined(HAVE_SYSTEMD) || defined(HAVE_ELOGIND) || defined(HAVE_SEATD) || defined(HAVE_CONSOLE_OWNER_FILE)
 dbus_bool_t _dbus_unix_user_is_at_console       (dbus_uid_t         uid,
                                                  DBusError         *error);
+#endif
 dbus_bool_t _dbus_unix_user_is_process_owner    (dbus_uid_t         uid);
 dbus_bool_t _dbus_windows_user_is_process_owner (const char        *windows_sid);
 

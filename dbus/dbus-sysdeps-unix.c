@@ -101,6 +101,10 @@
 #include <systemd/sd-daemon.h>
 #endif
 
+#ifdef HAVE_SEATD
+#include <libseat.h>
+#endif
+
 #if !defined(HAVE_STDATOMIC_H) && !DBUS_USE_SYNC
 #include <pthread.h>
 #endif
@@ -4602,6 +4606,53 @@ _dbus_lookup_session_address_launchd (dbus_bool_t *supported,
 }
 #endif
 
+#ifdef HAVE_SEATD
+static dbus_bool_t
+_dbus_lookup_session_address_seatd (dbus_bool_t *supported,
+                                    DBusString  *address,
+                                    DBusError   *error)
+{
+  int seatd_fd = -1;
+  struct seatd_seat *seat = NULL;
+
+  if (_dbus_check_setuid ())
+    {
+      dbus_set_error_const (error, DBUS_ERROR_NOT_SUPPORTED,
+                            "Unable to get seatd socket when setuid");
+      return FALSE;
+    }
+
+  seatd_fd = seatd_open_seat(&seat);
+  if (seatd_fd < 0)
+    {
+      _dbus_verbose ("Could not open seatd seat: %s\n", strerror(-seatd_fd));
+      *supported = FALSE;
+      return TRUE;
+    }
+
+  seatd_close_seat(seat);
+  close(seatd_fd);
+
+  const char *seatd_sock = getenv("SEATD_SOCK");
+  if (seatd_sock == NULL)
+    {
+      _dbus_verbose ("SEATD_SOCK not in environment");
+      *supported = FALSE;
+      return TRUE;
+    }
+
+  if (!_dbus_string_append (address, "unix:path=") ||
+      !_dbus_string_append (address, seatd_sock))
+    {
+      _DBUS_SET_OOM (error);
+      return FALSE;
+    }
+
+  *supported = TRUE;
+  return TRUE;
+}
+#endif
+
 static dbus_bool_t
 _dbus_lookup_user_bus (dbus_bool_t *supported,
                        DBusString  *address,
@@ -4702,6 +4753,13 @@ _dbus_lookup_session_address (dbus_bool_t *supported,
   return _dbus_lookup_session_address_launchd (supported, address, error);
 #else
   *supported = FALSE;
+
+#ifdef HAVE_SEATD
+  if (!_dbus_lookup_session_address_seatd (supported, address, error))
+    return FALSE;
+  else if (*supported)
+    return TRUE;
+#endif
 
   if (!_dbus_lookup_user_bus (supported, address, error))
     return FALSE;
@@ -5289,5 +5347,82 @@ _dbus_get_low_level_socket_errno (void)
 {
   return errno;
 }
+
+#if defined(HAVE_SYSTEMD) || defined(HAVE_ELOGIND) || defined(HAVE_SEATD) || defined(HAVE_CONSOLE_OWNER_FILE)
+/**
+ * Checks if a given user ID is at the console.
+ *
+ * @param uid the user ID
+ * @param error error return
+ * @returns #TRUE if the user is at the console, #FALSE otherwise or on error
+ */
+dbus_bool_t
+_dbus_unix_user_is_at_console (dbus_uid_t uid,
+                               DBusError *error)
+{
+#if defined(HAVE_SYSTEMD) || defined(HAVE_ELOGIND)
+  int r;
+  char *session;
+  dbus_bool_t ret = FALSE;
+
+  _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+
+  r = sd_uid_get_session (uid, &session);
+  if (r < 0)
+    {
+      if (r == -ENODATA)
+        {
+          _dbus_verbose ("User "DBUS_UID_FORMAT" is not logged in on any session\n", uid);
+          return FALSE;
+        }
+      else
+        {
+          dbus_set_error (error, _dbus_error_from_errno (-r),
+                          "Could not get session for UID "DBUS_UID_FORMAT": %s",
+                          uid, _dbus_strerror (-r));
+          return FALSE;
+        }
+    }
+
+  r = sd_session_is_active (session);
+  if (r < 0)
+    {
+      dbus_set_error (error, _dbus_error_from_errno (-r),
+                      "Could not get session active state for UID "DBUS_UID_FORMAT": %s",
+                      uid, _dbus_strerror (-r));
+    }
+  else
+    ret = r > 0;
+
+  free (session);
+  return ret;
+#elif defined(HAVE_SEATD)
+  /* FIXME: This is not implemented.
+   * To implement this, we would need a way for the dbus-daemon (running as
+   * root) to ask seatd which user (if any) is active on the console.
+   * The libseat API seems to be for clients to ask about their own status,
+   * not for a privileged daemon to ask about arbitrary users.
+   */
+  _dbus_warn ("seatd support for at_console checks is not implemented");
+  return FALSE;
+#elif defined(HAVE_CONSOLE_OWNER_FILE)
+  struct stat sb;
+
+  _DBUS_ASSERT_ERROR_IS_CLEAR (error);
+
+  if (stat (DBUS_CONSOLE_OWNER_FILE, &sb) < 0)
+    {
+      dbus_set_error (error, _dbus_error_from_errno (errno),
+                      "Could not stat console owner file %s: %s",
+                      DBUS_CONSOLE_OWNER_FILE, _dbus_strerror (errno));
+      return FALSE;
+    }
+
+  return sb.st_uid == uid;
+#else
+#error "Can't have _dbus_unix_user_is_at_console without systemd, elogind, seatd or console owner file"
+#endif
+}
+#endif /* defined(HAVE_SYSTEMD) || defined(HAVE_ELOGIND) || defined(HAVE_SEATD) || defined(HAVE_CONSOLE_OWNER_FILE) */
 
 /* tests in dbus-sysdeps-util.c */
