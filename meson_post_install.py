@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os, sys, stat
+import os, sys
 from pathlib import Path
 import shlex, subprocess, json
 
@@ -115,9 +115,10 @@ def post_install_exe():
                       'should only contain one!'
                       .format(dbus_user, len(dbus_group_data.gr_mem)))
                 return
-            
+
             os.chown(exe_path, 0, dbus_user_data.pw_gid)
-            os.chmod(exe_path, stat.S_ISUID | stat.S_IXUSR | stat.S_IXGRP)
+            # setuid, rwx for root, r-x for dbus_user
+            os.chmod(exe_path, 0o4750)
         else:
             print('Not installing {0} binary setuid!'.format(exe_path))
             print('You\'ll need to manually set permissions to root:{0} and permissions 4750'
