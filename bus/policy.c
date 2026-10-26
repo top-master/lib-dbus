@@ -922,8 +922,12 @@ bus_client_policy_check_can_send (BusClientPolicy *policy,
             }
         }
 
-      /* If it's a reply, the requested_reply flag kicks in */
-      if (dbus_message_get_reply_serial (message) != 0)
+      /* If it's a reply, the requested_reply flag kicks in, but the logic must
+       * only apply to actual reply message types.
+       */
+      if (dbus_message_get_reply_serial (message) != 0 &&
+          (dbus_message_get_type (message) == DBUS_MESSAGE_TYPE_METHOD_RETURN ||
+           dbus_message_get_type (message) == DBUS_MESSAGE_TYPE_ERROR))
         {
           /* for allow, requested_reply=true means the rule applies
            * only when reply was requested. requested_reply=false means
@@ -1198,8 +1202,12 @@ bus_client_policy_check_can_receive (BusClientPolicy *policy,
           continue;
         }
 
-      /* If it's a reply, the requested_reply flag kicks in */
-      if (dbus_message_get_reply_serial (message) != 0)
+      /* If it's a reply, the requested_reply flag kicks in, but the logic must
+       * only apply to actual reply message types.
+       */
+      if (dbus_message_get_reply_serial (message) != 0 &&
+          (dbus_message_get_type (message) == DBUS_MESSAGE_TYPE_METHOD_RETURN ||
+           dbus_message_get_type (message) == DBUS_MESSAGE_TYPE_ERROR))
         {
           /* for allow, requested_reply=true means the rule applies
            * only when reply was requested. requested_reply=false means
