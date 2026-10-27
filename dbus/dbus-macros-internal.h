@@ -29,6 +29,23 @@
 
 #include <dbus/dbus-macros.h>
 
+#if defined(__clang__)
+# define DBUS_BEGIN_IGNORE_DEPRECATIONS \
+    _Pragma("clang diagnostic push") \
+    _Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
+# define DBUS_END_IGNORE_DEPRECATIONS \
+    _Pragma("clang diagnostic pop")
+#elif __GNUC__ >= 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
+# define DBUS_BEGIN_IGNORE_DEPRECATIONS \
+    _Pragma("GCC diagnostic push") \
+    _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+# define DBUS_END_IGNORE_DEPRECATIONS \
+    _Pragma("GCC diagnostic pop")
+#else
+# define DBUS_BEGIN_IGNORE_DEPRECATIONS  /* nothing */
+# define DBUS_END_IGNORE_DEPRECATIONS    /* nothing */
+#endif
+
 #ifdef DBUS_ENABLE_INTRUSIVE_TESTS
 # define DBUS_INTRUSIVE_TESTS_EXPORT DBUS_PRIVATE_EXPORT
 #else

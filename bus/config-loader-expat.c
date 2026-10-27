@@ -221,8 +221,13 @@ bus_config_load (const DBusString      *file,
    * XML_SetHashSalt, check for that too, and use it preferentially.
    * https://github.com/libexpat/libexpat/issues/91 */
 #if defined(HAVE_XML_SETHASHSALT)
+  /* XML_SetHashSalt() is deprecated in favour of XML_SetHashSalt16Bytes,
+   * but we're asking for no protection against hash collisions anyway,
+   * so there would be no benefit to us providing a larger salt. */
+  DBUS_BEGIN_IGNORE_DEPRECATIONS
   /* Any nonzero number will do. https://xkcd.com/221/ */
   XML_SetHashSalt (expat, 4);
+  DBUS_END_IGNORE_DEPRECATIONS
 #endif
 
   if (!_dbus_string_get_dirname (file, &dirname))
