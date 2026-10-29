@@ -113,7 +113,7 @@ static Config wildcard_config = {
 };
 
 static Config selective_config = {
-    NULL,
+    "valid-config-files/allow-eavesdrop.conf",
     selective_match_rules,
     FALSE
 };
