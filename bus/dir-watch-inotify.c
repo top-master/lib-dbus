@@ -81,15 +81,18 @@ _handle_inotify_watch (DBusWatch *passed_watch, unsigned int flags, void *data)
     }
 
 #ifdef DBUS_ENABLE_VERBOSE_MODE
-  while (i < ret)
+  if (_dbus_is_verbose ())
     {
-      struct inotify_event *ev;
+      while (i < ret)
+        {
+          struct inotify_event *ev;
 
-      ev = (struct inotify_event *) &buffer.bytes[i];
-      i += INOTIFY_EVENT_SIZE + ev->len;
-      if (ev->len)
-        _dbus_verbose ("event name: '%s'\n", ev->name);
-      _dbus_verbose ("inotify event: wd=%d mask=%u cookie=%u len=%u\n", ev->wd, ev->mask, ev->cookie, ev->len);
+          ev = (struct inotify_event *) &buffer.bytes[i];
+          i += INOTIFY_EVENT_SIZE + ev->len;
+          if (ev->len)
+            _dbus_verbose ("event name: '%s'\n", ev->name);
+          _dbus_verbose ("inotify event: wd=%d mask=%u cookie=%u len=%u\n", ev->wd, ev->mask, ev->cookie, ev->len);
+        }
     }
 #endif
 
