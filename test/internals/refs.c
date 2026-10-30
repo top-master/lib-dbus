@@ -70,6 +70,78 @@ typedef struct {
 typedef void *(*RefFunc) (void *);
 typedef void (*VoidFunc) (void *);
 
+static inline void *
+_dbus_connection_ref_ref_func (void *p)
+{
+  return dbus_connection_ref (p);
+}
+
+static inline void *
+_dbus_connection_ref_unlocked_ref_func (void *p)
+{
+  return _dbus_connection_ref_unlocked (p);
+}
+
+static inline void
+_dbus_connection_unref_unlocked_voidp_func (void *p)
+{
+  _dbus_connection_unref_unlocked (p);
+}
+
+static inline void
+_dbus_connection_lock_voidp_func (void *p)
+{
+  _dbus_connection_lock (p);
+}
+
+static inline void
+_dbus_connection_unlock_voidp_func (void *p)
+{
+  _dbus_connection_unlock (p);
+}
+
+static inline void *
+_dbus_server_ref_ref_func (void *p)
+{
+  return dbus_server_ref (p);
+}
+
+static inline void
+_dbus_server_ref_unlocked_voidp_func (void *p)
+{
+  _dbus_server_ref_unlocked (p);
+}
+
+static inline void
+_dbus_server_unref_unlocked_free_func (void *p)
+{
+  _dbus_server_unref_unlocked (p);
+}
+
+static inline void *
+_dbus_message_ref_ref_func (void *p)
+{
+  return dbus_message_ref (p);
+}
+
+static inline void *
+_dbus_pending_call_ref_ref_func (void *p)
+{
+  return dbus_pending_call_ref (p);
+}
+
+static inline void *
+_dbus_pending_call_ref_unlocked_ref_func (void *p)
+{
+  return _dbus_pending_call_ref_unlocked (p);
+}
+
+static inline void
+_dbus_pending_call_unref_and_unlock_free_func (void *p)
+{
+  _dbus_pending_call_unref_and_unlock (p);
+}
+
 typedef struct {
   const Fixture *f;
   void *thing;
@@ -289,7 +361,7 @@ test_connection (Fixture *f,
   Thread public_api = {
     f,
     f->connection,
-    (RefFunc) dbus_connection_ref,
+    _dbus_connection_ref_ref_func,
     NULL,
     _dbus_connection_unref_free_func,
     NULL,
@@ -298,12 +370,12 @@ test_connection (Fixture *f,
   Thread internal_api = {
     f,
     f->connection,
-    (RefFunc) _dbus_connection_ref_unlocked,
+    _dbus_connection_ref_unlocked_ref_func,
     NULL,
-    (VoidFunc) _dbus_connection_unref_unlocked,
+    _dbus_connection_unref_unlocked_voidp_func,
     f->connection,
-    (VoidFunc) _dbus_connection_lock,
-    (VoidFunc) _dbus_connection_unlock };
+    _dbus_connection_lock_voidp_func,
+    _dbus_connection_unlock_voidp_func };
   unsigned i;
 
   /* Use a slot as a pseudo-weakref */
@@ -375,7 +447,7 @@ test_server (Fixture *f,
   Thread public_api = {
     f,
     f->server,
-    (RefFunc) dbus_server_ref,
+    _dbus_server_ref_ref_func,
     NULL,
     _dbus_server_unref_free_func,
     NULL,
@@ -385,8 +457,8 @@ test_server (Fixture *f,
     f,
     f->server,
     NULL,
-    (VoidFunc) _dbus_server_ref_unlocked,
-    (VoidFunc) _dbus_server_unref_unlocked,
+    _dbus_server_ref_unlocked_voidp_func,
+    _dbus_server_unref_unlocked_free_func,
     f->server,
     server_lock,
     server_unlock };
@@ -448,7 +520,7 @@ test_message (Fixture *f,
   Thread public_api = {
     f,
     message,
-    (RefFunc) dbus_message_ref,
+    _dbus_message_ref_ref_func,
     NULL,
     _dbus_message_unref_free_func,
     NULL,
@@ -496,7 +568,7 @@ test_pending_call (Fixture *f,
   Thread public_api = {
     f,
     NULL,
-    (RefFunc) dbus_pending_call_ref,
+    _dbus_pending_call_ref_ref_func,
     NULL,
     _dbus_pending_call_unref_free_func,
     NULL,
@@ -505,21 +577,21 @@ test_pending_call (Fixture *f,
   Thread internal_api = {
     f,
     NULL,
-    (RefFunc) _dbus_pending_call_ref_unlocked,
+    _dbus_pending_call_ref_unlocked_ref_func,
     NULL,
     _dbus_pending_call_unref_free_func,
     f->connection,
-    (VoidFunc) _dbus_connection_lock,
-    (VoidFunc) _dbus_connection_unlock };
+    _dbus_connection_lock_voidp_func,
+    _dbus_connection_unlock_voidp_func };
   /* This one can't be used to ref, only to cycle or unref. */
   Thread unref_and_unlock_api = {
     f,
     NULL,
-    (RefFunc) _dbus_pending_call_ref_unlocked,
+    _dbus_pending_call_ref_unlocked_ref_func,
     NULL,
-    (VoidFunc) _dbus_pending_call_unref_and_unlock,
+    _dbus_pending_call_unref_and_unlock_free_func,
     f->connection,
-    (VoidFunc) _dbus_connection_lock,
+    _dbus_connection_lock_voidp_func,
     NULL };
   unsigned i;
   DBusPendingCall *pending_call;
