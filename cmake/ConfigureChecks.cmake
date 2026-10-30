@@ -147,9 +147,24 @@ endif()
 message("int64 type detected as ${DBUS_INT64_TYPE}")
 message("int64 printf modifier detected as ${DBUS_INT64_MODIFIER}")
 
-# MSVCRT.dll printf() doesn't support %lld
+# MSVCRT.dll printf() doesn't support %lld, but the UCRT does, and gcc
+# checks mingw-w64 UCRT formats with gnu_printf rules, where "I64" is
+# not a valid length modifier.
 if(WIN32 AND NOT CYGWIN)
-    set(DBUS_INT64_MODIFIER  "I64")
+    check_c_source_compiles("
+        #ifndef __USE_MINGW_ANSI_STDIO
+        # define __USE_MINGW_ANSI_STDIO 0
+        #endif
+        #include <stdio.h>
+        #if !(defined(_UCRT) || __USE_MINGW_ANSI_STDIO)
+        # error not gnu_printf style
+        #endif
+        int main(void) { return 0; }" DBUS_USES_GNU_PRINTF)
+    if(DBUS_USES_GNU_PRINTF)
+        set(DBUS_INT64_MODIFIER "ll")
+    else()
+        set(DBUS_INT64_MODIFIER "I64")
+    endif()
     message("int64 printf modifier overridden to ${DBUS_INT64_MODIFIER}")
 endif()
 

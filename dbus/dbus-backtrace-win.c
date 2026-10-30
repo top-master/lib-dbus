@@ -150,12 +150,12 @@ static void dump_backtrace_for_thread (HANDLE hThread)
       if (SymFromAddr (GetCurrentProcess (), sf.AddrPC.Offset, &displacement, pSymbol))
         {
           if (displacement)
-            DPRINTF ("%3d %s+0x%I64x", i++, pSymbol->Name, displacement);
+            DPRINTF ("%3d %s+0x%" DBUS_INT64_MODIFIER "x", i++, pSymbol->Name, (dbus_uint64_t) displacement);
           else
             DPRINTF ("%3d %s", i++, pSymbol->Name);
         }
       else
-        DPRINTF ("%3d 0x%Ix", i++, sf.AddrPC.Offset);
+        DPRINTF ("%3d 0x%" DBUS_INT64_MODIFIER "x", i++, (dbus_uint64_t) sf.AddrPC.Offset);
 
       line.SizeOfStruct = sizeof(IMAGEHLP_LINE);
       if (SymGetLineFromAddr (GetCurrentProcess (), sf.AddrPC.Offset, &dwDisplacement, &line))

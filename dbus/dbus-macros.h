@@ -66,7 +66,18 @@
 #  define _DBUS_GNUC_EXTENSION
 #endif
 
-#if     (__GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ > 4)) || \
+#if defined(__MINGW32__)
+# include <stdio.h>   /* pulls in _mingw.h and defines __MINGW_PRINTF_FORMAT */
+#endif
+
+#if defined(__MINGW32__) && defined(__MINGW_PRINTF_FORMAT)
+# define _DBUS_GNUC_PRINTF( format_idx, arg_idx ) \
+  __attribute__((__format__ (__MINGW_PRINTF_FORMAT, format_idx, arg_idx)))
+#define _DBUS_GNUC_NORETURN                         \
+  __attribute__((__noreturn__))
+#define _DBUS_GNUC_UNUSED                           \
+  __attribute__((__unused__))
+#elif     (__GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ > 4)) || \
          defined(__clang__)
 #define _DBUS_GNUC_PRINTF( format_idx, arg_idx )    \
   __attribute__((__format__ (__printf__, format_idx, arg_idx)))

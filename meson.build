@@ -294,9 +294,29 @@ foreach type : int_types
         arch_config.set('DBUS_INT64_CONSTANT', type.get('type_c'))
         arch_config.set('DBUS_UINT64_CONSTANT', type.get('type_u_c'))
         if platform_windows
-          # MSVCRT.dll printf() doesn't support %lld
-          arch_config.set('DBUS_INT64_MODIFIER', 'I64')
-          message('int64 printf modifier overridden to I64')
+          # MSVCRT.dll printf() doesn't support %lld, but the UCRT does.
+          # With mingw-w64, <stdio.h> selects the gnu_printf format
+          # attribute if _UCRT or __USE_MINGW_ANSI_STDIO is set, and gcc
+          # then rejects "I64" (it parses "I" as a flag). Use the same
+          # condition as mingw-w64's <stdio.h> to pick the modifier.
+          if cc.get_argument_syntax() == 'msvc'
+            int64_modifier = 'I64'
+          elif cc.compiles('''
+              #include <stdio.h>
+              #if !(defined(_UCRT) || __USE_MINGW_ANSI_STDIO)
+              # error stdio does not use gnu_printf style formats
+              #endif
+              int main (void) { return 0; }
+              ''',
+              args: compile_args_c,
+              name: 'stdio uses gnu_printf style formats',
+          )
+            int64_modifier = 'll'
+          else
+            int64_modifier = 'I64'
+          endif
+          arch_config.set('DBUS_INT64_MODIFIER', int64_modifier)
+          message('int64 printf modifier overridden to @0@'.format(int64_modifier))
         else
           arch_config.set('DBUS_INT64_MODIFIER', type.get('type_m'))
           message('int64 printf modifier detected as @0@'.format(type.get('type_m')))
