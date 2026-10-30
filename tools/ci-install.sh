@@ -91,18 +91,15 @@ case "$ci_distro" in
                 ;;
         esac
 
+        packages=(
+            clang
+            libclang-rt-dev
+        )
+
+        $sudo apt-get -qq -y update
+        $sudo apt-get -qq -y install "${packages[@]}"
+
         packages=()
-
-        case "$ci_host/$ci_suite" in
-            (*-w64-mingw32/bookworm)
-                echo "deb https://deb.debian.org/debian bookworm-backports main" >> /etc/apt/sources.list.d/backports.list
-                packages=("${packages[@]}" meson/bookworm-backports)
-                ;;
-
-            (*)
-                packages=("${packages[@]}" meson)
-                ;;
-        esac
 
         case "$ci_host" in
             (i686-w64-mingw32)
@@ -158,6 +155,7 @@ case "$ci_distro" in
             libsystemd-dev
             libx11-dev
             llvm
+            meson
             ninja-build
             sudo
             valgrind
@@ -170,14 +168,7 @@ case "$ci_distro" in
             zstd
         )
 
-        $sudo apt-get -qq -y update
         $sudo apt-get -qq -y --no-install-recommends install "${packages[@]}"
-
-        packages=(
-            clang
-        )
-
-        $sudo apt-get -qq -y install "${packages[@]}"
 
         if [ "$ci_in_docker" = yes ]; then
             # Add the user that we will use to do the build inside the
@@ -302,7 +293,7 @@ case "$ci_distro" in
         $sudo pkg upgrade -y
         packages=(
             bash
-            cmake
+            cmake-core
             docbook-xml
             docbook-xsl
             expat

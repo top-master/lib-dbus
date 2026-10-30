@@ -371,9 +371,12 @@ case "$ci_buildsys" in
                     (*)
                         set -- -Db_sanitize=address,undefined "$@"
 
-                        # https://github.com/mesonbuild/meson/issues/764
                         if [ "$ci_compiler" = "clang" ]; then
+                            # https://github.com/mesonbuild/meson/issues/764
                             set -- -Db_lundef=false "$@"
+
+                            # https://gitlab.freedesktop.org/dbus/dbus/-/work_items/578
+                            export CFLAGS="${CFLAGS-} -fno-sanitize=function"
                         fi
 
                         set -- -Db_pie=true "$@"
