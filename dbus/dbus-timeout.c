@@ -194,6 +194,15 @@ struct DBusTimeoutList
   DBusFreeFunction timeout_free_data_function;       /**< Free function for timeout callback data */
 };
 
+static void
+timeout_list_remove_timeout_foreach (void *element,
+                                     void *data)
+{
+  DBusTimeoutList *timeout_list = data;
+
+  timeout_list->remove_timeout_function (element, timeout_list->timeout_data);
+}
+
 /**
  * Creates a new timeout list. Returns #NULL if insufficient
  * memory exists.
@@ -289,8 +298,8 @@ _dbus_timeout_list_set_functions (DBusTimeoutList           *timeout_list,
   if (timeout_list->remove_timeout_function != NULL)
     {
       _dbus_list_foreach (&timeout_list->timeouts,
-			  (DBusForeachFunction) timeout_list->remove_timeout_function,
-			  timeout_list->timeout_data);
+                          timeout_list_remove_timeout_foreach,
+                          timeout_list);
     }
 
   if (timeout_list->timeout_free_data_function != NULL)

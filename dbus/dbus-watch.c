@@ -226,6 +226,15 @@ struct DBusWatchList
   DBusFreeFunction watch_free_data_function;  /**< Free function for watch callback data */
 };
 
+static void
+watch_list_remove_watch_foreach (void *element,
+                                 void *data)
+{
+  DBusWatchList *watch_list = data;
+
+  watch_list->remove_watch_function (element, watch_list->watch_data);
+}
+
 /**
  * Creates a new watch list. Returns #NULL if insufficient
  * memory exists.
@@ -356,8 +365,8 @@ _dbus_watch_list_set_functions (DBusWatchList           *watch_list,
       _dbus_verbose ("Removing all pre-existing watches\n");
       
       _dbus_list_foreach (&watch_list->watches,
-                          (DBusForeachFunction) watch_list->remove_watch_function,
-                          watch_list->watch_data);
+                          watch_list_remove_watch_foreach,
+                          watch_list);
     }
 
   if (watch_list->watch_free_data_function != NULL)
