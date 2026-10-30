@@ -1070,6 +1070,8 @@ config.set_quoted('DBUS_USER', dbus_user)
 test_user = get_option('test_user')
 config.set_quoted('DBUS_TEST_USER', test_user)
 
+data_config.set('DBUS_TEST_GROUP', get_option('test_group'))
+
 daemon_dir = get_option('dbus_daemondir')
 if daemon_dir == ''
     daemon_dir = get_option('prefix') / get_option('bindir')

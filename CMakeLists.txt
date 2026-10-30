@@ -619,6 +619,7 @@ else(WIN32)
 endif()
 
 set(DBUS_DAEMON_NAME "dbus-daemon" CACHE STRING "The name of the dbus daemon executable")
+set(DBUS_TEST_GROUP "tty" CACHE STRING "A Unix group name that must exist on the system where tests are run, ignored on Windows")
 
 ########### create config.h ###############
 
