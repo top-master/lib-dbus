@@ -712,8 +712,9 @@ oom:
 }
 
 static void
-check_pending_fds_cb (DBusConnection *connection)
+check_pending_fds_cb (void *p)
 {
+  DBusConnection *connection = p;
   BusConnectionData *d = BUS_CONNECTION_DATA (connection);
   int n_pending_unix_fds_old;
   int n_pending_unix_fds_new;
@@ -876,8 +877,8 @@ bus_connections_setup_connection (BusConnections *connections,
     goto oom;
 
   _dbus_connection_set_pending_fds_function (connection,
-          (DBusPendingFdsChangeFunction) check_pending_fds_cb,
-          connection);
+                                             check_pending_fds_cb,
+                                             connection);
 
   _dbus_list_append_link (&connections->incomplete, d->link_in_connection_list);
   connections->n_incomplete += 1;
