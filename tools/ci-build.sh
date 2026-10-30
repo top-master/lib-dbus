@@ -177,6 +177,9 @@ case "$ci_host" in
     (*-w64-mingw32)
         if [ "$ci_local_packages" = yes ]; then
             dep_prefix=$(pwd)/${ci_host}-prefix
+            # Treat any headers found here as though they were part of the OS,
+            # so some compiler warnings get disabled for them
+            export CFLAGS="${CFLAGS-} -isystem $(pwd)/${ci_host}-prefix/include"
         else
             # assume the compiler was configured with a sysroot (e.g. openSUSE)
             sysroot=$("${ci_host}-gcc" --print-sysroot)
