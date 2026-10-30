@@ -1284,7 +1284,7 @@ _dbus_connection_new_for_transport (DBusTransport *transport)
   pending_replies =
     _dbus_hash_table_new (DBUS_HASH_INT,
 			  NULL,
-                          (DBusFreeFunction)free_pending_call_on_hash_removal);
+                          free_pending_call_on_hash_removal);
   if (pending_replies == NULL)
     goto error;
   

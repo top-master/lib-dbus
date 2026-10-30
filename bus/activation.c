@@ -1025,8 +1025,7 @@ bus_activation_new (BusContext        *context,
     }
 
   activation->environment = _dbus_hash_table_new (DBUS_HASH_STRING,
-                                                  (DBusFreeFunction) dbus_free,
-                                                  (DBusFreeFunction) dbus_free);
+                                                  dbus_free, dbus_free);
 
   if (activation->environment == NULL)
     {
