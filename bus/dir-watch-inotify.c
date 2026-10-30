@@ -59,13 +59,17 @@ static DBusLoop *loop = NULL;
 static dbus_bool_t
 _handle_inotify_watch (DBusWatch *passed_watch, unsigned int flags, void *data)
 {
-  char buffer[INOTIFY_BUF_LEN];
+  union
+    {
+      char bytes[INOTIFY_BUF_LEN];
+      struct inotify_event ev;
+    } buffer;
   ssize_t ret = 0;
 #ifdef DBUS_ENABLE_VERBOSE_MODE
   int i = 0;
 #endif
 
-  ret = read (inotify_fd, buffer, INOTIFY_BUF_LEN);
+  ret = read (inotify_fd, buffer.bytes, INOTIFY_BUF_LEN);
   if (ret < 0)
     _dbus_verbose ("Error reading inotify event: '%s'\n", _dbus_strerror(errno));
   else if (!ret)
@@ -81,7 +85,7 @@ _handle_inotify_watch (DBusWatch *passed_watch, unsigned int flags, void *data)
     {
       struct inotify_event *ev;
 
-      ev = (struct inotify_event *) &buffer[i];
+      ev = (struct inotify_event *) &buffer.bytes[i];
       i += INOTIFY_EVENT_SIZE + ev->len;
       if (ev->len)
         _dbus_verbose ("event name: '%s'\n", ev->name);
