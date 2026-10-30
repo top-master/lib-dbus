@@ -77,6 +77,10 @@ variables:
     FDO_DISTRIBUTION_VERSION: 'leap'
     FDO_DISTRIBUTION_TAG: "2025-02-27.0-$UPSTREAM_BRANCH"
 
+    # The default tty group doesn't seem to be guaranteed to exist on all
+    # openSUSE container images
+    ci_test_group: 'root'
+
 .freebsd-vars:
   variables:
     BUILD_OS: freebsd

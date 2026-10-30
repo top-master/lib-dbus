@@ -119,6 +119,10 @@ init_wine() {
 # If yes, run tests; if no, just build
 : "${ci_test:=yes}"
 
+# ci_test_group:
+# If non-empty, a group that can be used to run the tests
+: "${ci_test_group:=}"
+
 # ci_cmake_junit_output:
 # If non-empty, emit JUnit XML output from CTest tests to that file
 # Note: requires CMake 3.21 or newer.
@@ -276,6 +280,10 @@ case "$ci_buildsys" in
                 set -- "$@" -D DBUS_ENABLE_INTRUSIVE_TESTS=ON
                 ;;
         esac
+
+        if [ -n "$ci_test_group" ]; then
+            set -- "$@" -D DBUS_TEST_GROUP="$ci_test_group"
+        fi
 
         $cmake -DCMAKE_VERBOSE_MAKEFILE=ON -DENABLE_WERROR=ON -S "$srcdir" -B "$ci_builddir" "$@"
 
@@ -461,6 +469,10 @@ case "$ci_buildsys" in
         # package building, so they include --wrap-mode=nodownload. Switch
         # the wrap mode back, so we can use wraps.
         set -- "$@" --wrap=default
+
+        if [ -n "$ci_test_group" ]; then
+            set -- "$@" -Dtest_group="$ci_test_group"
+        fi
 
         $meson_setup "$@" "$srcdir"
         meson compile -v
