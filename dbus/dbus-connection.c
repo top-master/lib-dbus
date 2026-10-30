@@ -367,8 +367,9 @@ _dbus_message_filter_ref (DBusMessageFilter *filter)
 }
 
 static void
-_dbus_message_filter_unref (DBusMessageFilter *filter)
+_dbus_message_filter_unref (void *p)
 {
+  DBusMessageFilter *filter = p;
   dbus_int32_t old_value;
 
   old_value = _dbus_atomic_dec (&filter->refcount);
@@ -4735,8 +4736,7 @@ dbus_connection_dispatch (DBusConnection *connection)
       link = next;
     }
 
-  _dbus_list_clear_full (&filter_list_copy,
-                         (DBusFreeFunction) _dbus_message_filter_unref);
+  _dbus_list_clear_full (&filter_list_copy, _dbus_message_filter_unref);
 
   CONNECTION_LOCK (connection);
 

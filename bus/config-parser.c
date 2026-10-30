@@ -255,8 +255,10 @@ bus_config_service_dir_new_take (char *path,
 }
 
 static void
-bus_config_service_dir_free (BusConfigServiceDir *self)
+bus_config_service_dir_free (void *p)
 {
+  BusConfigServiceDir *self = p;
+
   dbus_free (self->path);
   dbus_free (self);
 }
@@ -590,7 +592,7 @@ bus_config_parser_unref (BusConfigParser *parser)
 
       _dbus_list_clear_full (&parser->listen_on, dbus_free);
       _dbus_list_clear_full (&parser->service_dirs,
-                             (DBusFreeFunction) bus_config_service_dir_free);
+                             bus_config_service_dir_free);
       _dbus_list_clear_full (&parser->conf_dirs, dbus_free);
       _dbus_list_clear_full (&parser->mechanisms, dbus_free);
 

@@ -47,7 +47,7 @@ TestMainContext *test_main_context_get            (void);
 _DBUS_WARN_UNUSED_RESULT
 TestMainContext *test_main_context_try_get        (void);
 TestMainContext *test_main_context_ref            (TestMainContext *ctx);
-void             test_main_context_unref          (TestMainContext *ctx);
+void             test_main_context_unref          (void *ctx);
 void             test_main_context_iterate        (TestMainContext *ctx,
                                                    dbus_bool_t      may_block);
 

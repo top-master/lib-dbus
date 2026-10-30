@@ -1268,8 +1268,10 @@ rule_list_free (DBusList **rules)
 }
 
 static void
-rule_list_ptr_free (DBusList **list)
+rule_list_ptr_free (void *p)
 {
+  DBusList **list = p;
+
   /* We have to cope with NULL because the hash table frees the "existing"
    * value (which is NULL) when creating a new table entry...
    */
@@ -1297,7 +1299,7 @@ bus_matchmaker_new (void)
       RulePool *p = matchmaker->rules_by_type + i;
 
       p->rules_by_iface = _dbus_hash_table_new (DBUS_HASH_STRING,
-          dbus_free, (DBusFreeFunction) rule_list_ptr_free);
+                                                dbus_free, rule_list_ptr_free);
 
       if (p->rules_by_iface == NULL)
         goto nomem;

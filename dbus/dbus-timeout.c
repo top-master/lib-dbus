@@ -107,11 +107,13 @@ _dbus_timeout_ref (DBusTimeout *timeout)
  * Decrements the reference count of a DBusTimeout object
  * and finalizes the object if the count reaches zero.
  *
- * @param timeout the timeout object.
+ * @param p the #DBusTimeout object.
  */
 void
-_dbus_timeout_unref (DBusTimeout *timeout)
+_dbus_timeout_unref (void *p)
 {
+  DBusTimeout *timeout = p;
+
   _dbus_assert (timeout != NULL);
   _dbus_assert (timeout->refcount > 0);
   
@@ -222,8 +224,7 @@ _dbus_timeout_list_free (DBusTimeoutList *timeout_list)
   _dbus_timeout_list_set_functions (timeout_list,
 				    NULL, NULL, NULL, NULL, NULL);
 
-  _dbus_list_clear_full (&timeout_list->timeouts,
-                         (DBusFreeFunction) _dbus_timeout_unref);
+  _dbus_list_clear_full (&timeout_list->timeouts, _dbus_timeout_unref);
 
   dbus_free (timeout_list);
 }

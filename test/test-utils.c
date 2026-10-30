@@ -444,7 +444,7 @@ test_main_context_ref (TestMainContext *ctx)
   return _dbus_loop_ref (ctx);
 }
 
-void test_main_context_unref (TestMainContext *ctx)
+void test_main_context_unref (void *ctx)
 {
   _dbus_loop_unref (ctx);
 }

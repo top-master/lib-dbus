@@ -130,11 +130,14 @@ bus_service_directory_ref (BusServiceDirectory *dir)
 #endif
 
 static void
-bus_service_directory_unref (BusServiceDirectory *dir)
+bus_service_directory_unref (void *p)
 {
-  if (dir == NULL)
+  BusServiceDirectory *dir;
+
+  if (p == NULL)
     return;
 
+  dir = p;
   _dbus_assert (dir->refcount > 0);
   dir->refcount--;
 
@@ -170,13 +173,15 @@ bus_pending_activation_ref (BusPendingActivation *pending_activation)
 }
 
 static void
-bus_pending_activation_unref (BusPendingActivation *pending_activation)
+bus_pending_activation_unref (void *p)
 {
+  BusPendingActivation *pending_activation;
   DBusList *link;
 
-  if (pending_activation == NULL) /* hash table requires this */
+  if (p == NULL) /* hash table requires this */
     return;
 
+  pending_activation = p;
   _dbus_assert (pending_activation->refcount > 0);
   pending_activation->refcount -= 1;
 
@@ -240,11 +245,14 @@ bus_activation_entry_ref (BusActivationEntry *entry)
 }
 
 static void
-bus_activation_entry_unref (BusActivationEntry *entry)
+bus_activation_entry_unref (void *p)
 {
-  if (entry == NULL) /* hash table requires this */
+  BusActivationEntry *entry;
+
+  if (p == NULL) /* hash table requires this */
     return;
 
+  entry = p;
   _dbus_assert (entry->refcount > 0);
   entry->refcount--;
 
@@ -913,7 +921,7 @@ bus_activation_reload (BusActivation     *activation,
   if (activation->entries != NULL)
     _dbus_hash_table_unref (activation->entries);
   activation->entries = _dbus_hash_table_new (DBUS_HASH_STRING, NULL,
-                                             (DBusFreeFunction)bus_activation_entry_unref);
+                                              bus_activation_entry_unref);
   if (activation->entries == NULL)
     {
       BUS_SET_OOM (error);
@@ -921,7 +929,7 @@ bus_activation_reload (BusActivation     *activation,
     }
 
   _dbus_list_clear_full (&activation->directories,
-                         (DBusFreeFunction) bus_service_directory_unref);
+                         bus_service_directory_unref);
 
   link = _dbus_list_get_first_link (directories);
   while (link != NULL)
@@ -951,7 +959,7 @@ bus_activation_reload (BusActivation     *activation,
       s_dir->flags = config->flags;
 
       s_dir->entries = _dbus_hash_table_new (DBUS_HASH_STRING, NULL,
-                                             (DBusFreeFunction)bus_activation_entry_unref);
+                                             bus_activation_entry_unref);
 
       if (!s_dir->entries)
         {
@@ -1016,7 +1024,7 @@ bus_activation_new (BusContext        *context,
    /* Initialize this hash table once, we don't want to lose pending
    * activations on reload. */
   activation->pending_activations = _dbus_hash_table_new (DBUS_HASH_STRING, NULL,
-                                                          (DBusFreeFunction)bus_pending_activation_unref);
+                                                          bus_pending_activation_unref);
 
   if (activation->pending_activations == NULL)
     {
@@ -1073,7 +1081,7 @@ bus_activation_unref (BusActivation *activation)
     _dbus_hash_table_unref (activation->pending_activations);
 
   _dbus_list_clear_full (&activation->directories,
-                         (DBusFreeFunction) bus_service_directory_unref);
+                         bus_service_directory_unref);
 
   if (activation->environment)
     _dbus_hash_table_unref (activation->environment);

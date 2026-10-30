@@ -137,8 +137,10 @@ _dbus_watch_ref (DBusWatch *watch)
  * @param watch the watch object.
  */
 void
-_dbus_watch_unref (DBusWatch *watch)
+_dbus_watch_unref (void *p)
 {
+  DBusWatch *watch = p;
+
   _dbus_assert (watch != NULL);
   _dbus_assert (watch->refcount > 0);
 
@@ -254,8 +256,7 @@ _dbus_watch_list_free (DBusWatchList *watch_list)
   _dbus_watch_list_set_functions (watch_list,
                                   NULL, NULL, NULL, NULL, NULL);
 
-  _dbus_list_clear_full (&watch_list->watches,
-                         (DBusFreeFunction) _dbus_watch_unref);
+  _dbus_list_clear_full (&watch_list->watches, _dbus_watch_unref);
 
   dbus_free (watch_list);
 }
