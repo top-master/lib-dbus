@@ -65,6 +65,9 @@ struct DBusTransportSocket
                                          *   outgoing message that have
                                          *   been written.
                                          */
+  dbus_bool_t epipe_seen;               /**< EPIPE has occurred, so stop
+                                         *   reading further.
+                                         */
   DBusString encoded_outgoing;          /**< Encoded version of current
                                          *   outgoing message.
                                          */
@@ -141,7 +144,8 @@ check_write_watch (DBusTransport *transport)
   _dbus_transport_ref (transport);
 
   if (_dbus_transport_try_to_authenticate (transport))
-    needed = _dbus_connection_has_messages_to_send_unlocked (transport->connection);
+    needed = _dbus_connection_has_messages_to_send_unlocked (transport->connection) &&
+             !socket_transport->epipe_seen;
   else
     {
       if (transport->send_credentials_pending)
@@ -671,8 +675,14 @@ do_writing (DBusTransport *transport)
            * http://lists.freedesktop.org/archives/dbus/2008-March/009526.html
            */
           
-          if (_dbus_get_is_errno_eagain_or_ewouldblock (saved_errno) || _dbus_get_is_errno_epipe (saved_errno))
+          if (_dbus_get_is_errno_eagain_or_ewouldblock (saved_errno))
             goto out;
+          else if (_dbus_get_is_errno_epipe (saved_errno))
+            {
+              /* No further writes to this peer. */
+              socket_transport->epipe_seen = TRUE;
+              goto out;
+            }
 
           /* Since Linux commit 25888e (from 2.6.37-rc4, Nov 2010), sendmsg()
            * on Unix sockets returns -1 errno=ETOOMANYREFS when the passfd
@@ -1345,6 +1355,7 @@ _dbus_transport_new_for_socket (DBusSocket        fd,
 
   socket_transport->fd = fd;
   socket_transport->message_bytes_written = 0;
+  socket_transport->epipe_seen = FALSE;
   
   /* These values should probably be tunable or something. */     
   socket_transport->max_bytes_read_per_iteration = 2048;
