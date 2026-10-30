@@ -2787,7 +2787,7 @@ _dbus_connection_last_unref (DBusConnection *connection)
   _dbus_list_clear (&connection->outgoing_messages);
 
   _dbus_list_clear_full (&connection->incoming_messages,
-                         (DBusFreeFunction) dbus_message_unref);
+                         _dbus_message_unref_free_func);
 
   _dbus_counter_unref (connection->outgoing_counter);
 

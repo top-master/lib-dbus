@@ -30,8 +30,15 @@
 #include <dbus/dbus-message.h>
 #include <dbus/dbus-connection.h>
 #include <dbus/dbus-list.h>
+#include <dbus/dbus-pending-call.h>
 
 DBUS_BEGIN_DECLS
+
+static inline void
+_dbus_pending_call_unref_free_func (void *p)
+{
+  dbus_pending_call_unref (p);
+}
 
 dbus_bool_t      _dbus_pending_call_is_timeout_added_unlocked    (DBusPendingCall    *pending);
 void             _dbus_pending_call_set_timeout_added_unlocked   (DBusPendingCall    *pending,

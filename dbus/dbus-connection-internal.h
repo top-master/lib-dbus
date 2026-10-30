@@ -47,6 +47,12 @@ typedef enum
 /** default timeout value when waiting for a message reply, 25 seconds */
 #define _DBUS_DEFAULT_TIMEOUT_VALUE (25 * 1000)
 
+static inline void
+_dbus_connection_unref_free_func (void *p)
+{
+  dbus_connection_unref (p);
+}
+
 typedef void (* DBusPendingFdsChangeFunction) (void *data);
 
 DBUS_PRIVATE_EXPORT

@@ -37,6 +37,12 @@
 
 DBUS_BEGIN_DECLS
 
+static inline void
+_dbus_server_unref_free_func (void *p)
+{
+  dbus_server_unref (p);
+}
+
 typedef struct DBusServerVTable DBusServerVTable;
 
 /**
