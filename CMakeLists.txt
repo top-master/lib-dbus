@@ -84,6 +84,17 @@ option(DBUS_RELOCATABLE "Attempt to make metadata relocatable" ON)
 option(DBUS_ENABLE_PKGCONFIG "Enable pkgconfig support" ON)
 option(ENABLE_VERBOSE_CONFIG "Be verbose on generating config files" OFF)
 
+# Absolute install dirs below the prefix (e.g. set by mingw64-cmake wrappers)
+# are made relative, so that the exported targets stay relocatable.
+foreach(_d BINDIR LIBDIR LIBEXECDIR INCLUDEDIR DATADIR SYSCONFDIR LOCALSTATEDIR)
+    if(IS_ABSOLUTE "${CMAKE_INSTALL_${_d}}")
+        file(RELATIVE_PATH _rel "${CMAKE_INSTALL_PREFIX}" "${CMAKE_INSTALL_${_d}}")
+        if(NOT _rel MATCHES "^\\.\\./" AND NOT _rel STREQUAL "")
+            set(CMAKE_INSTALL_${_d} "${_rel}")
+        endif()
+    endif()
+endforeach()
+
 # For simplicity, we're not relocatable if CMAKE_INSTALL_LIBDIR
 # is something more complicated (e.g. Debian multiarch);
 # we don't want to have to compute how many ../ to add
