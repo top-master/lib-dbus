@@ -670,21 +670,14 @@ endif()
 # create cmake find_package related files
 #
 set(INSTALL_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/DBus1)
-if(WIN32)
-    configure_file(cmake/DBus1Config.cmake.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
-else()
-    configure_file(cmake/DBus1Config.pkgconfig.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
-endif()
+configure_file(cmake/DBus1Config.cmake.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
 configure_file(cmake/DBus1ConfigVersion.cmake.in "${PROJECT_BINARY_DIR}/DBus1ConfigVersion.cmake" @ONLY)
 install(FILES
     "${PROJECT_BINARY_DIR}/DBus1Config.cmake"
     "${PROJECT_BINARY_DIR}/DBus1ConfigVersion.cmake"
     DESTINATION "${INSTALL_CMAKE_DIR}"
 )
-
-if(WIN32)
-    install(EXPORT DBus1Targets DESTINATION "${INSTALL_CMAKE_DIR}")
-endif()
+install(EXPORT DBus1Targets DESTINATION "${INSTALL_CMAKE_DIR}")
 
 ########### subdirs ###############
 
