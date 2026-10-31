@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.15)
 
 # we do not need to have WIN32 defined
 set(CMAKE_LEGACY_CYGWIN_WIN32 0)
