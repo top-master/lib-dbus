@@ -2090,6 +2090,7 @@ test_fd_limit (Fixture *f,
 
 #define ECHO_SERVICE "org.freedesktop.DBus.TestSuiteEchoService"
 #define FORKING_ECHO_SERVICE "org.freedesktop.DBus.TestSuiteForkingEchoService"
+#define SLEEP_FOREVER_SERVICE "org.freedesktop.DBus.TestSuiteSleepForeverService"
 #define ECHO_SERVICE_PATH "/org/freedesktop/TestSuite"
 #define ECHO_SERVICE_INTERFACE "org.freedesktop.TestSuite"
 
@@ -2571,6 +2572,170 @@ test_send_destination_prefix (Fixture *f,
   helper_send_destination_prefix (f, "foo.bar.test.dest_prefix.dp.f3.apxdp.dp.ap.d.f.f.f.f",  "com.example.Anything", "Anything", FALSE, NULL);
 }
 
+#ifdef ENABLE_TRADITIONAL_ACTIVATION
+static void
+test_per_connection_activation_limit (Fixture *f,
+    gconstpointer context)
+{
+  GQueue replies = G_QUEUE_INIT;
+  GQueue right_replies = G_QUEUE_INIT;
+  DBusMessage *m;
+  DBusPendingCall *pc;
+  guint i;
+  const char *service_name = SLEEP_FOREVER_SERVICE;
+  dbus_uint32_t flags = 0;
+  DBusError error = DBUS_ERROR_INIT;
+
+  if (f->skip)
+    return;
+
+  add_echo_filter (f);
+
+  /* The configured max_replies_per_connection is 3, which the fix also
+   * uses as the per-connection pending activation limit.  Send that many
+   * StartServiceByName requests for a service whose helper never
+   * connects, so each activation stays pending. */
+  for (i = 0; i < 3; i++)
+    {
+      m = dbus_message_new_method_call (DBUS_SERVICE_DBUS,
+                                        DBUS_PATH_DBUS,
+                                        DBUS_INTERFACE_DBUS,
+                                        "StartServiceByName");
+
+      if (m == NULL ||
+          !dbus_message_append_args (m,
+                                     DBUS_TYPE_STRING, &service_name,
+                                     DBUS_TYPE_UINT32, &flags,
+                                     DBUS_TYPE_INVALID))
+        g_error ("OOM");
+
+      if (!dbus_connection_send_with_reply (f->left_conn, m, &pc,
+                                            DBUS_TIMEOUT_INFINITE) ||
+          pc == NULL)
+        g_error ("OOM");
+
+      dbus_pending_call_unref (pc);
+      dbus_message_unref (m);
+    }
+
+  /* A round-trip Ping proves the daemon has processed all 3 activation
+   * requests (it handles messages from a connection in order). */
+  m = dbus_message_new_method_call (DBUS_SERVICE_DBUS,
+                                    DBUS_PATH_DBUS,
+                                    DBUS_INTERFACE_PEER,
+                                    "Ping");
+  if (m == NULL)
+    g_error ("OOM");
+
+  if (!dbus_connection_send_with_reply (f->left_conn, m, &pc,
+                                        DBUS_TIMEOUT_USE_DEFAULT) ||
+      pc == NULL)
+    g_error ("OOM");
+
+  if (dbus_pending_call_get_completed (pc))
+    pc_enqueue (pc, &replies);
+  else if (!dbus_pending_call_set_notify (pc, pc_enqueue, &replies,
+        NULL))
+    g_error ("OOM");
+
+  dbus_pending_call_unref (pc);
+  dbus_message_unref (m);
+
+  while (g_queue_get_length (&replies) < 1)
+    test_main_context_iterate (f->ctx, TRUE);
+
+  m = g_queue_pop_head (&replies);
+  g_assert_nonnull (m);
+  g_assert_cmpint (dbus_message_get_type (m), ==,
+                   DBUS_MESSAGE_TYPE_METHOD_RETURN);
+  dbus_message_unref (m);
+
+  g_test_message ("Daemon processed initial activations, sending over-limit request");
+
+  /* Now the 4th activation from the same connection should be rejected
+   * immediately with LIMITS_EXCEEDED. */
+  m = dbus_message_new_method_call (DBUS_SERVICE_DBUS,
+                                    DBUS_PATH_DBUS,
+                                    DBUS_INTERFACE_DBUS,
+                                    "StartServiceByName");
+
+  if (m == NULL ||
+      !dbus_message_append_args (m,
+                                 DBUS_TYPE_STRING, &service_name,
+                                 DBUS_TYPE_UINT32, &flags,
+                                 DBUS_TYPE_INVALID))
+    g_error ("OOM");
+
+  if (!dbus_connection_send_with_reply (f->left_conn, m, &pc,
+                                        DBUS_TIMEOUT_USE_DEFAULT) ||
+      pc == NULL)
+    g_error ("OOM");
+
+  if (dbus_pending_call_get_completed (pc))
+    pc_enqueue (pc, &replies);
+  else if (!dbus_pending_call_set_notify (pc, pc_enqueue, &replies,
+        NULL))
+    g_error ("OOM");
+
+  dbus_pending_call_unref (pc);
+  dbus_message_unref (m);
+
+  while (g_queue_get_length (&replies) < 1)
+    test_main_context_iterate (f->ctx, TRUE);
+
+  m = g_queue_pop_head (&replies);
+  g_assert_nonnull (m);
+
+  if (!dbus_set_error_from_message (&error, m))
+    g_error ("Expected an error reply for the over-limit activation");
+
+  g_assert_cmpstr (error.name, ==, DBUS_ERROR_LIMITS_EXCEEDED);
+  g_test_message ("Over-limit activation correctly refused: %s", error.message);
+  dbus_error_free (&error);
+  dbus_message_unref (m);
+
+  /* A different connection should still be able to activate, proving the
+   * global limit was not exhausted.  Send StartServiceByName from
+   * right_conn, then call Echo (which right_conn handles) on right_conn
+   * via left_conn to do a round-trip.  If the activation had been
+   * rejected, the error reply would arrive on right_conn. */
+  m = dbus_message_new_method_call (DBUS_SERVICE_DBUS,
+                                    DBUS_PATH_DBUS,
+                                    DBUS_INTERFACE_DBUS,
+                                    "StartServiceByName");
+
+  if (m == NULL ||
+      !dbus_message_append_args (m,
+                                 DBUS_TYPE_STRING, &service_name,
+                                 DBUS_TYPE_UINT32, &flags,
+                                 DBUS_TYPE_INVALID))
+    g_error ("OOM");
+
+  if (!dbus_connection_send_with_reply (f->right_conn, m, &pc,
+                                        DBUS_TIMEOUT_INFINITE) ||
+      pc == NULL)
+    g_error ("OOM");
+
+  if (dbus_pending_call_get_completed (pc))
+    pc_enqueue (pc, &right_replies);
+  else if (!dbus_pending_call_set_notify (pc, pc_enqueue, &right_replies,
+        NULL))
+    g_error ("OOM");
+
+  dbus_pending_call_unref (pc);
+  dbus_message_unref (m);
+
+  /* Round-trip via the echo filter to synchronize. */
+  echo_left_to_right (f, 1);
+
+  g_assert_cmpuint (g_queue_get_length (&right_replies), ==, 0);
+  g_test_message ("Second connection activation was accepted (not rejected)");
+
+  g_queue_clear (&replies);
+  g_queue_clear (&right_replies);
+}
+#endif
+
 static void
 teardown (Fixture *f,
     gconstpointer context G_GNUC_UNUSED)
@@ -2715,6 +2880,11 @@ static Config tmp_session_config = {
 
 static Config nearly_system_config = {
     NULL, 1, "valid-config-files-system/tmp-session-like-system.conf",
+    TEST_USER_ME, SPECIFY_ADDRESS
+};
+
+static Config per_connection_activations_config = {
+    NULL, 1, "valid-config-files/per-connection-activations.conf",
     TEST_USER_ME, SPECIFY_ADDRESS
 };
 #endif
@@ -2881,6 +3051,9 @@ main (int argc,
               setup, test_activation_forking, teardown);
   g_test_add ("/system-policy/allow-signals", Fixture, &nearly_system_config,
               setup, test_system_signals, teardown);
+  g_test_add ("/limits/per-connection-activations", Fixture,
+              &per_connection_activations_config,
+              setup, test_per_connection_activation_limit, teardown);
 #endif
 #endif
 
