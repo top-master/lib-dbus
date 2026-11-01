@@ -945,6 +945,17 @@ dbus_shutdown (void)
 
 /** @} */ /** End of public API docs block */
 
+#ifdef __has_attribute
+#if __has_attribute(destructor)
+__attribute__((destructor))
+static void
+do_dbus_shutdown (void)
+{
+  dbus_shutdown ();
+}
+#endif
+#endif
+
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
 #include "dbus-test.h"
 
