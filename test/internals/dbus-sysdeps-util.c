@@ -37,7 +37,12 @@
 #include "dbus/dbus-test.h"
 #include <dbus/dbus-test-tap.h>
 
+#include <errno.h>
 #include <stdlib.h>
+
+#ifndef DBUS_WIN
+#include <sys/select.h>
+#endif
 
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
 static void
@@ -81,6 +86,45 @@ check_path_absolute (const char *path,
       exit (1);
     }
 }
+
+#if defined(DBUS_UNIX) && (!defined(HAVE_POLL) || defined(BROKEN_POLL))
+static void
+check_poll_invalid_fd (void)
+{
+  DBusPollFD fd;
+  int ret;
+
+  /* Test that an fd at FD_SETSIZE is rejected */
+  fd.fd = FD_SETSIZE;
+  fd.events = _DBUS_POLLIN;
+  fd.revents = 0;
+  errno = 0;
+  ret = _dbus_poll (&fd, 1, 0);
+
+  if (ret != -1 || errno != EINVAL)
+    {
+      _dbus_warn ("_dbus_poll with fd=%d: expected ret=-1 errno=EINVAL, "
+                  "got ret=%d errno=%d",
+                  fd.fd, ret, errno);
+      exit (1);
+    }
+
+  /* Test that a negative fd is rejected */
+  fd.fd = -2;
+  fd.events = _DBUS_POLLIN;
+  fd.revents = 0;
+  errno = 0;
+  ret = _dbus_poll (&fd, 1, 0);
+
+  if (ret != -1 || errno != EINVAL)
+    {
+      _dbus_warn ("_dbus_poll with fd=%d: expected ret=-1 errno=EINVAL, "
+                  "got ret=%d errno=%d",
+                  fd.fd, ret, errno);
+      exit (1);
+    }
+}
+#endif
 
 /**
  * Unit test for dbus-sysdeps.c.
@@ -151,6 +195,10 @@ _dbus_sysdeps_test (const char *test_data_dir _DBUS_GNUC_UNUSED)
   check_path_absolute ("", FALSE);
   check_path_absolute ("foo", FALSE);
   check_path_absolute ("foo/bar", FALSE);
+#endif
+
+#if defined(DBUS_UNIX) && (!defined(HAVE_POLL) || defined(BROKEN_POLL))
+  check_poll_invalid_fd ();
 #endif
 
   return TRUE;

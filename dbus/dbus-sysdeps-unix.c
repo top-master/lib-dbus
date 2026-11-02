@@ -3356,6 +3356,12 @@ _dbus_poll (DBusPollFD *fds,
     {
       DBusPollFD *fdp = &fds[i];
 
+      if (fdp->fd < 0 || fdp->fd >= FD_SETSIZE)
+        {
+          errno = EINVAL;
+          return -1;
+        }
+
       if (fdp->events & _DBUS_POLLIN)
 	FD_SET (fdp->fd, &read_set);
 
