@@ -27,5 +27,8 @@
 
     <!-- Used to reproduce dbus#457 -->
     <deny receive_interface="org.freedesktop.DBus" receive_member="NameAcquired"/>
+
+    <!-- Used to reproduce dbus#576 -->
+    <deny receive_interface="org.freedesktop.DBus" receive_member="NameOwnerChanged"/>
   </policy>
 </busconfig>

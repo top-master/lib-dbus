@@ -1100,6 +1100,94 @@ test_forbidden_broadcast (Fixture *f,
   g_assert (m == NULL);
 }
 
+/*
+ * Regression test for https://gitlab.freedesktop.org/dbus/dbus/-/issues/576:
+ * when a bus-generated broadcast such as NameOwnerChanged cannot be delivered
+ * to a subscriber (due to a <deny> rule or exceeding max_outgoing_bytes),
+ * with a monitor attached, the daemon synthesizes an error reply for
+ * monitors. Before the fix, the NameOwnerChanged message had no serial
+ * number, causing the daemon to crash (assertion failure / SIGABRT) when
+ * creating the error reply.
+ *
+ * This is analogous to the initial PoC, but uses a <deny> rule instead of
+ * filling the outgoing queue, to achieve the same undeliverable-broadcast
+ * condition deterministically.
+ */
+static void
+test_forbidden_name_owner_changed (Fixture *f,
+    gconstpointer context)
+{
+  DBusConnection *extra;
+  DBusMessage *m;
+  DBusMessage *noc;
+
+  if (f->address == NULL)
+    return;
+
+  /* The recipient subscribes to NameOwnerChanged. The forbidding config
+   * denies receiving it, so delivery will fail. With a monitor attached,
+   * the daemon must synthesize an error reply for the monitor. */
+  dbus_bus_add_match (f->recipient,
+      "type='signal',interface='org.freedesktop.DBus',"
+      "member='NameOwnerChanged'",
+      &f->e);
+  test_assert_no_error (&f->e);
+
+  become_monitor (f, NULL);
+
+  /* Creating a new connection triggers a NameOwnerChanged broadcast
+   * from the bus driver. Before the fix for dbus#576, this would crash
+   * the daemon because NameOwnerChanged had no serial number when the
+   * daemon tried to create an error reply for the monitor. */
+  extra = test_connect_to_bus (f->ctx, f->address);
+
+  /* Expected monitored messages:
+   * 1. Hello method call
+   * 2. Hello reply
+   * 3. NameOwnerChanged signal (bus-generated broadcast)
+   * 4. AccessDenied error (for denied NameOwnerChanged delivery)
+   * 5. NameAcquired signal (bus-generated unicast to extra)
+   * 6. AccessDenied error (for denied NameAcquired delivery)
+   */
+  while (g_queue_get_length (&f->monitored) < 6)
+    test_main_context_iterate (f->ctx, TRUE);
+
+  m = g_queue_pop_head (&f->monitored);
+  assert_hello (m);
+  dbus_message_unref (m);
+
+  m = g_queue_pop_head (&f->monitored);
+  assert_hello_reply (m);
+  dbus_message_unref (m);
+
+  noc = g_queue_pop_head (&f->monitored);
+  assert_signal (noc, DBUS_SERVICE_DBUS, DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS,
+      "NameOwnerChanged", "sss", NULL);
+
+  /* The error reply for the denied NameOwnerChanged delivery.
+   * Before dbus#576 was fixed, the daemon would have crashed before
+   * reaching this point. */
+  m = g_queue_pop_head (&f->monitored);
+  assert_error_reply (m, DBUS_SERVICE_DBUS, DBUS_SERVICE_DBUS,
+      DBUS_ERROR_ACCESS_DENIED);
+  g_assert_cmpint (dbus_message_get_reply_serial (m), ==,
+      dbus_message_get_serial (noc));
+  dbus_message_unref (m);
+  dbus_message_unref (noc);
+
+  m = g_queue_pop_head (&f->monitored);
+  assert_unique_name_acquired (m);
+  expect_name_acquired_error (&f->monitored, m);
+  dbus_message_unref (m);
+
+  m = g_queue_pop_head (&f->monitored);
+  g_assert (m == NULL);
+
+  test_connection_shutdown (f->ctx, extra);
+  dbus_connection_close (extra);
+  dbus_connection_unref (extra);
+}
+
 static void
 test_unicast_signal (Fixture *f,
     gconstpointer context)
@@ -2038,6 +2126,9 @@ main (int argc,
       setup, test_broadcast, teardown);
   g_test_add ("/monitor/forbidden-broadcast", Fixture, &forbidding_config,
       setup, test_forbidden_broadcast, teardown);
+  g_test_add ("/monitor/forbidden-name-owner-changed",
+      Fixture, &forbidding_config,
+      setup, test_forbidden_name_owner_changed, teardown);
   g_test_add ("/monitor/unicast-signal", Fixture, NULL,
       setup, test_unicast_signal, teardown);
   g_test_add ("/monitor/forbidden", Fixture, &forbidding_config,
