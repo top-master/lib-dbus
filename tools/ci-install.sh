@@ -186,7 +186,7 @@ case "$ci_distro" in
         # system
         packages=(
             sudo
-            system-group-hardware
+            "group(tty)"
         )
 
         # build system
