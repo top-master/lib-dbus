@@ -3,14 +3,58 @@ dbus 1.16.4 (UNRELEASED)
 
 Bug fixes:
 
+• Avoid a busy-loop on non-Linux operating systems that can report
+  end-of-stream with POLLHUP but neither POLLIN nor POLLERR, such as
+  FreeBSD and OpenBSD (dbus#553, Gleb Popov)
+
+• Avoid a possible busy-loop when blocking on a DBusPendingCall with its
+  timeout set to DBUS_TIMEOUT_INFINITE
+  (dbus!524, dbus!525; Gleb Popov, Simon McVittie)
+
+• Avoid a rare assertion failure when waiting on a condition variable
+  (dbus#556, Johan Bolmsjö)
+
+• Fix a memory leak during autolaunching if dbus-launch or launchctl fails
+  (dbus!560, Oleg Tsvetkov)
+
 • Correct commented-out default auth_timeout in system.conf
   (dbus!519, Simon McVittie)
 
+• When built with Meson, fix CMake builds that discover libdbus via
+  CMake rather than pkg-config metadata
+  (dbus!542, Zephyr Lykos)
+
+• When built with Meson and fallback subprojects are enabled,
+  disable unnecessary features and try to link them statically
+  (dbus!516, Simon McVittie)
+
+• On non-Linux platforms, never try to compile with Linux epoll support,
+  even if the OS has a compatibility interface for epoll
+  (dbus#557; Alan Coopersmith, Jonathan Perkins)
+
+• Fix compiler warnings in dbus-send(1)
+  (dbus!558, dbus!559; Simon McVittie)
+
+• Avoid deprecation warnings if compiled against Expat 2.9.0 or later
+  (dbus!561, dbus!564; Oleg Tsvetkov, Simon McVittie)
+
+• Update fallback subprojects for GLib and Expat
+  (dbus!426, dbus!429; Simon McVittie)
+
 Internal changes:
 
-• Skip a known-failing test on all FreeBSD versions (dbus#308)
+• Skip a known-failing test on all FreeBSD versions
+  (dbus#308, Simon McVittie)
 
-• CI fixes (dbus#546, dbus#547, dbus#548, dbus!515)
+• Fix test failure if DBUS_TEST_DBUS_MONITOR is unset
+  (dbus#424, Philip Withnall)
+
+• CI fixes
+  (dbus#546, dbus#547, dbus#548, dbus#558, dbus#572, dbus#578, dbus#580,
+  dbus#582,
+  dbus!528, dbus!531, dbus!556, dbus!557, dbus!569, dbus!577, dbus!580,
+  dbus!589;
+  Simon McVittie, Gleb Popov, Ralf Habacker)
 
 dbus 1.16.2 (2025-02-27)
 ========================

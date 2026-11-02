@@ -28,13 +28,13 @@ workflow:
 
 include:
   - project: 'freedesktop/ci-templates'
-    ref: fb33e1b244ec2a0b8edf8ee5590a96369c3b4666
+    ref: e6415f6cc602d8afe4731d4f21b47f3eda03f879
     file:
       - '/templates/debian.yml'
       - '/templates/freebsd.yml'
       - '/templates/opensuse.yml'
 
-image: debian:bookworm-slim
+image: debian:trixie-slim
 
 stages:
   - 'build docker'
@@ -55,7 +55,7 @@ variables:
   # If you are hacking on them or need a them to rebuild, its enough
   # to change any part of the string of the image you want.
   ###
-  WINDOWS_TAG: "2025-02-27.0"
+  WINDOWS_TAG: "2026-10-30.0"
 
   UPSTREAM_BRANCH: 'dbus-1.16'
   UPSTREAM_REPO: 'dbus/dbus'
@@ -68,9 +68,9 @@ variables:
 
 .debian-vars:
   variables:
-    FDO_DISTRIBUTION_VERSION: 'bookworm-slim'
+    FDO_DISTRIBUTION_VERSION: 'trixie-slim'
     # Bump this version on every ci-install.sh or dist version change
-    FDO_DISTRIBUTION_TAG: "2025-02-27.0-$UPSTREAM_BRANCH"
+    FDO_DISTRIBUTION_TAG: "2026-10-30.1-$UPSTREAM_BRANCH"
 
 .opensuse-vars:
   variables:
@@ -81,8 +81,9 @@ variables:
   variables:
     BUILD_OS: freebsd
     BUILD_ARCH: "x86_64"
-    FDO_DISTRIBUTION_VERSION: '14.2'
-    FDO_DISTRIBUTION_TAG: "2025-02-27.1-$UPSTREAM_BRANCH"
+    FDO_DISTRIBUTION_VERSION: '15.1'
+    FDO_DISTRIBUTION_TAG: "2026-10-30.0-$UPSTREAM_BRANCH"
+    FDO_IMAGE_SIZE: '+1G'
     FDO_REPO_SUFFIX: "$BUILD_OS/$BUILD_ARCH"
 
 .cmake-common:
@@ -201,7 +202,7 @@ debian meson clang debug:
     - tar --strip-components=1 -C test/use-as-subproject/subprojects/dbus -xf $ci_builddir/meson-dist/*.tar.xz
     - meson setup --wrap-mode=forcefallback test/use-as-subproject/_build test/use-as-subproject
     - meson compile -C test/use-as-subproject/_build
-    - meson test -C test/use-as-subproject/_build
+    - "meson test -C test/use-as-subproject/_build dbus:"
 
 debian meson reduced:
   extends:
@@ -370,7 +371,7 @@ windows vs15-64 cmake:
     - .cmake-common
     - .win-build
   script:
-    - cmake -DCMAKE_PREFIX_PATH=C:/ -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=Debug -DDBUS_ENABLE_VERBOSE_MODE=OFF -DDBUS_ENABLE_INTRUSIVE_TESTS=ON -S . -B build
+    - cmake -DCMAKE_PREFIX_PATH=C:/ -G "Visual Studio 15 2017" -A x64 -DCMAKE_BUILD_TYPE=Debug -DDBUS_ENABLE_VERBOSE_MODE=OFF -DDBUS_ENABLE_INTRUSIVE_TESTS=ON -S . -B build
     - cmake --build build --config Debug
     - cmake --install build --config Debug
     # FIXME: a few tests timeout on gitlab runner for unknown reason
@@ -387,7 +388,7 @@ windows-meson-mingw-ucrt64:
     - C:\msys64\usr\bin\bash -lc "
         meson build &&
         ninja -j1 -C build &&
-        meson test --no-suite=runs-dbus-daemon -C build"
+        meson test --no-suite=runs-dbus-daemon -C build dbus:"
   artifacts:
     reports:
       junit: "build/meson-logs/testlog.junit.xml"
@@ -406,7 +407,7 @@ windows-meson-vs15-x86:
     - cmd.exe /C "C:\BuildTools\Common7\Tools\VsDevCmd.bat -host_arch=amd64 -arch=x86 &&
         meson --force-fallback-for=expat,glib,zlib build &&
         meson compile -C build &&
-        meson test --no-suite=runs-dbus-daemon -C build"
+        meson test --no-suite=runs-dbus-daemon -C build dbus:"
   artifacts:
     reports:
       junit: "build/meson-logs/testlog.junit.xml"
@@ -476,6 +477,7 @@ freebsd cmake debug:
     # Don't build doxygen documentation since installing the required tools
     # massively increases the VM image (and therefore container) size.
     CI_BUILD_ARGS: "-DDBUS_ENABLE_DOXYGEN_DOCS=OFF -DDBUS_ENABLE_XML_DOCS=ON -DCMAKE_BUILD_TYPE=Debug"
+  when: manual
 
 freebsd cmake release:
   extends:
@@ -485,6 +487,7 @@ freebsd cmake release:
     # Don't build doxygen documentation since installing the required tools
     # massively increases the VM image (and therefore container) size.
     CI_BUILD_ARGS: "-DDBUS_ENABLE_DOXYGEN_DOCS=OFF -DDBUS_ENABLE_XML_DOCS=ON -DCMAKE_BUILD_TYPE=Release"
+  when: manual
 
 freebsd meson:
   extends:
@@ -494,7 +497,7 @@ freebsd meson:
     # On FreeBSD the `environ` symbol is provided by the c startup code and is
     # only defined in the main executable and not  available in libc.so, so
     # building with -Wl,-no-undefined results in errors.
-    # See https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=263265.
+    # See https://reviews.freebsd.org/D30842
     CI_BUILD_ARGS: "-Db_lundef=false"
 
 # vim:set sw=2 sts=2 et:

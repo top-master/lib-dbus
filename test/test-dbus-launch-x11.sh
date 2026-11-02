@@ -29,7 +29,7 @@ set -x
 export DBUS_DEBUG_OUTPUT=1
 echo "# dbus-daemon binary: ${DBUS_TEST_DAEMON:=dbus-daemon}"
 echo "# dbus-launch binary: ${DBUS_TEST_DBUS_LAUNCH:=dbus-launch}"
-echo "# dbus-monitor binary: ${DBUS_TEST_DBUS_LAUNCH:=dbus-monitor}"
+echo "# dbus-monitor binary: ${DBUS_TEST_DBUS_MONITOR:=dbus-monitor}"
 echo "# dbus-send binary: ${DBUS_TEST_DBUS_SEND:=dbus-send}"
 echo "# dbus-uuidgen binary: ${DBUS_TEST_DBUS_UUIDGEN:=dbus-uuidgen}"
 

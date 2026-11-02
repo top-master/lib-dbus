@@ -1,11 +1,13 @@
 [wrap-file]
-directory = expat-2.4.8
-source_url = https://github.com/libexpat/libexpat/releases/download/R_2_4_8/expat-2.4.8.tar.xz
-source_filename = expat-2.4.8.tar.bz2
-source_hash = f79b8f904b749e3e0d20afeadecf8249c55b2e32d4ebb089ae378df479dcaf25
-patch_filename = expat_2.4.8-1_patch.zip
-patch_url = https://wrapdb.mesonbuild.com/v2/expat_2.4.8-1/get_patch
-patch_hash = 9aec253a2c6d1c0feb852c5c6920298d14701eeec7acc6832bb402438b52112a
+directory = expat-2.6.4
+source_url = https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4.tar.xz
+source_filename = expat-2.6.4.tar.bz2
+source_hash = a695629dae047055b37d50a0ff4776d1d45d0a4c842cf4ccee158441f55ff7ee
+patch_filename = expat_2.6.4-1_patch.zip
+patch_url = https://wrapdb.mesonbuild.com/v2/expat_2.6.4-1/get_patch
+patch_hash = e4ffff014e06b805fbb36cd1e911e90829dc1e07301a3aee53231f9048758558
+source_fallback_url = https://github.com/mesonbuild/wrapdb/releases/download/expat_2.6.4-1/expat-2.6.4.tar.bz2
+wrapdb_version = 2.6.4-1
 
 [provide]
 expat = expat_dep

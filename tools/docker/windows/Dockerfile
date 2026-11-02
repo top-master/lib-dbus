@@ -51,9 +51,9 @@ RUN C:\TEMP\Install.cmd C:\TEMP\vs_buildtools.exe --quiet --wait --norestart --n
 # Upstream expat doesn't ship devel? let's build it then...
 # ADD https://github.com/libexpat/libexpat/releases/download/R_2_4_1/expat-win32bin-2.4.1.exe C:\TEMP\expat.exe
 # RUN C:\TEMP\expat.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-RUN git clone --depth 1 --branch R_2_4_2 https://github.com/libexpat/libexpat
+RUN git clone --depth 1 --branch R_2_8_2 https://github.com/libexpat/libexpat
 WORKDIR "/libexpat/expat"
-RUN cmake --install-prefix c:/ -G '"Visual Studio 15 2017 Win64"' .
+RUN cmake --install-prefix c:/ -G '"Visual Studio 15 2017"' -A x64 .
 RUN cmake --build . --config Release
 RUN cmake --install . --config Release
 

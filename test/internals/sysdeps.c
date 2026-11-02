@@ -299,6 +299,67 @@ test_set_all_close_on_exec (Fixture *f,
 }
 #endif
 
+#if defined(G_OS_UNIX) && defined(DBUS_ENABLE_X11_AUTOLAUNCH) && \
+  defined(DBUS_ENABLE_EMBEDDED_TESTS)
+static void
+test_autolaunch_failure (Fixture *f G_GNUC_UNUSED,
+                         gconstpointer context G_GNUC_UNUSED)
+{
+  DBusError d_error = DBUS_ERROR_INIT;
+  DBusGUID uuid;
+  DBusConnection *conn;
+  gchar *saved_display;
+  gchar *saved_launch;
+  gchar *helper;
+
+  helper = test_get_helper_executable ("test-exit" DBUS_EXEEXT);
+
+  if (helper == NULL)
+    {
+      g_test_skip ("DBUS_TEST_EXEC not set");
+      return;
+    }
+
+  if (!_dbus_read_local_machine_uuid (&uuid, FALSE, &d_error))
+    {
+      g_test_message ("%s", d_error.message);
+      g_test_skip ("Cannot autolaunch without a machine ID");
+      dbus_error_free (&d_error);
+      g_free (helper);
+      return;
+    }
+
+  saved_display = g_strdup (g_getenv ("DISPLAY"));
+  saved_launch = g_strdup (g_getenv ("DBUS_TEST_DBUS_LAUNCH"));
+
+  /* test-exit stands in for a dbus-launch that fails: it exits with
+   * status 1. If the buffer for dbus-launch's error output leaks,
+   * AddressSanitizer reports it when this test exits. */
+  g_setenv ("DISPLAY", ":nonexistent", TRUE);
+  g_setenv ("DBUS_TEST_DBUS_LAUNCH", helper, TRUE);
+
+  conn = dbus_connection_open_private ("autolaunch:", &d_error);
+  g_assert_null (conn);
+  g_test_message ("%s: %s", d_error.name, d_error.message);
+  g_assert_cmpstr (d_error.name, ==, DBUS_ERROR_SPAWN_EXEC_FAILED);
+  dbus_error_free (&d_error);
+
+  if (saved_display == NULL)
+    g_unsetenv ("DISPLAY");
+  else
+    g_setenv ("DISPLAY", saved_display, TRUE);
+
+  if (saved_launch == NULL)
+    g_unsetenv ("DBUS_TEST_DBUS_LAUNCH");
+  else
+    g_setenv ("DBUS_TEST_DBUS_LAUNCH", saved_launch, TRUE);
+
+  g_free (helper);
+  g_free (saved_display);
+  g_free (saved_launch);
+}
+#endif
+
 static void
 teardown (Fixture *f G_GNUC_UNUSED,
           gconstpointer context G_GNUC_UNUSED)
@@ -332,6 +393,11 @@ main (int argc,
               Fixture, NULL, setup, test_close_all, teardown);
   g_test_add ("/sysdeps/set_all_close_on_exec",
               Fixture, NULL, setup, test_set_all_close_on_exec, teardown);
+#endif
+#if defined(G_OS_UNIX) && defined(DBUS_ENABLE_X11_AUTOLAUNCH) && \
+  defined(DBUS_ENABLE_EMBEDDED_TESTS)
+  g_test_add ("/sysdeps/autolaunch_failure",
+              Fixture, NULL, setup, test_autolaunch_failure, teardown);
 #endif
 
   ret = g_test_run ();

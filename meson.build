@@ -362,6 +362,16 @@ config.set(
     and cc.has_header_symbol('time.h', 'clock_getres', args: compile_args_c),
 )
 
+fallback_subproject_options = [
+    'werror=false',
+]
+
+if cc.get_id() != 'msvc'
+    # TODO: Ideally we'd have default_library=static with MSVC too,
+    # but see https://gitlab.freedesktop.org/dbus/dbus/-/issues/549
+    fallback_subproject_options += ['default_library=static']
+endif
+
 # Controls whether message bus daemon is built. Tests which depend on
 # a running dbus-daemon will be disabled if message_bus is not set.
 message_bus = get_option('message_bus')
@@ -373,8 +383,9 @@ else
         'glib-2.0', version: '>=2.40',
         required: get_option('modular_tests'),
         fallback: ['glib', 'libglib_dep'],
-        default_options: [
-           'tests=false',
+        default_options: fallback_subproject_options + [
+            'introspection=disabled',
+            'tests=false',
         ],
     )
 endif
@@ -394,7 +405,12 @@ endif
 use_glib = glib.found() and gio.found()
 
 if message_bus
-    expat = dependency('expat')
+    expat = dependency(
+        'expat',
+        default_options: fallback_subproject_options + [
+            'build_tests=false',
+        ],
+    )
 else
     expat = dependency('', required: false)
 endif
@@ -429,7 +445,7 @@ else
     endif
 endif
 
-if get_option('epoll').disabled()
+if get_option('epoll').disabled() or (get_option('epoll').auto() and (host_os != 'linux'))
     use_linux_epoll = false
 else
     use_linux_epoll = (

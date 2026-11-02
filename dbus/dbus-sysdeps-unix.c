@@ -4260,6 +4260,7 @@ _read_subprocess_line_argv (const char *progpath,
         dbus_set_error (error, DBUS_ERROR_SPAWN_EXEC_FAILED,
                         "%s terminated abnormally without any error message",
                         progpath);
+      _dbus_string_free (&error_message);
       goto out;
     }
 

@@ -28,6 +28,12 @@
 #include <dbus/dbus-internals.h>
 #include <expat.h>
 
+#if XML_MAJOR_VERSION < 2 || (XML_MAJOR_VERSION == 2 && XML_MINOR_VERSION < 9)
+/* Expat 2.9.0 deprecated these in favour of 64-bit versions */
+#define XML_GetCurrentLineNumber64 XML_GetCurrentLineNumber
+#define XML_GetCurrentColumnNumber64 XML_GetCurrentColumnNumber
+#endif
+
 static XML_Memory_Handling_Suite memsuite;
 
 typedef struct
@@ -215,8 +221,13 @@ bus_config_load (const DBusString      *file,
    * XML_SetHashSalt, check for that too, and use it preferentially.
    * https://github.com/libexpat/libexpat/issues/91 */
 #if defined(HAVE_XML_SETHASHSALT)
+  /* XML_SetHashSalt() is deprecated in favour of XML_SetHashSalt16Bytes,
+   * but we're asking for no protection against hash collisions anyway,
+   * so there would be no benefit to us providing a larger salt. */
+  DBUS_BEGIN_IGNORE_DEPRECATIONS
   /* Any nonzero number will do. https://xkcd.com/221/ */
   XML_SetHashSalt (expat, 4);
+  DBUS_END_IGNORE_DEPRECATIONS
 #endif
 
   if (!_dbus_string_get_dirname (file, &dirname))
@@ -272,11 +283,12 @@ bus_config_load (const DBusString      *file,
               dbus_set_error (error, DBUS_ERROR_FAILED,
                               "Error in file %s, line %lu, column %lu: %s\n",
                               filename,
-                              /* The XML_Size type varies according to
-                               * build options, so cast to something we can
-                               * cope with. */
-                              (unsigned long) XML_GetCurrentLineNumber (expat),
-                              (unsigned long) XML_GetCurrentColumnNumber (expat),
+                              /* The type is XML_Size, which varies
+                               * according to build options, or uint64_t
+                               * since Expat 2.9.0, so cast to something
+                               * we can cope with. */
+                              (unsigned long) XML_GetCurrentLineNumber64 (expat),
+                              (unsigned long) XML_GetCurrentColumnNumber64 (expat),
                               XML_ErrorString (e));
           }
 

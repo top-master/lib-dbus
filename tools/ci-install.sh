@@ -91,7 +91,14 @@ case "$ci_distro" in
                 ;;
         esac
 
+        packages=(
+            clang
+            libclang-rt-dev
+        )
+
         $sudo apt-get -qq -y update
+        $sudo apt-get -qq -y install "${packages[@]}"
+
         packages=()
 
         case "$ci_host" in
@@ -163,12 +170,6 @@ case "$ci_distro" in
 
         $sudo apt-get -qq -y --no-install-recommends install "${packages[@]}"
 
-        packages=(
-            clang
-        )
-
-        $sudo apt-get -qq -y install "${packages[@]}"
-
         if [ "$ci_in_docker" = yes ]; then
             # Add the user that we will use to do the build inside the
             # Docker container, and let them use sudo
@@ -185,6 +186,7 @@ case "$ci_distro" in
         # system
         packages=(
             sudo
+            "group(tty)"
         )
 
         # build system
@@ -217,11 +219,6 @@ case "$ci_distro" in
             (opensuse-leap)
                 version=$(. /etc/os-release; echo ${VERSION_ID} | sed 's, ,_,g')
                 repo="openSUSE_Leap_$version"
-                # Use a newer CMake (3.21) version for JUnit XML support on openSUSE Leap.
-                if ! zypper lr windows_mingw > /dev/null; then
-                    $zypper ar --refresh --no-gpgcheck \
-                        "https://download.opensuse.org/repositories/windows:/mingw/$repo/windows:mingw.repo"
-                fi
                 ;;
             (opensuse-tumbleweed)
                 repo="openSUSE_Tumbleweed"
@@ -248,7 +245,7 @@ case "$ci_distro" in
                     bits="32"
                 fi
                 if ! zypper lr "windows_mingw_win${bits}" > /dev/null; then
-                    $zypper ar --refresh --no-gpgcheck \
+                    $zypper ar \
                         "https://download.opensuse.org/repositories/windows:/mingw:/win${bits}/$repo/windows:mingw:win${bits}.repo"
                 fi
                 packages=(
@@ -273,6 +270,11 @@ case "$ci_distro" in
                 )
                 ;;
         esac
+
+        # refresh repos
+        $zypper --gpg-auto-import-keys refresh
+
+        # install packages
         $zypper install --allow-vendor-change "${packages[@]}"
 
         if [ "$ci_in_docker" = yes ]; then
@@ -292,7 +294,7 @@ case "$ci_distro" in
         $sudo pkg upgrade -y
         packages=(
             bash
-            cmake
+            cmake-core
             docbook-xml
             docbook-xsl
             expat

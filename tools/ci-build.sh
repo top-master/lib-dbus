@@ -177,6 +177,9 @@ case "$ci_host" in
     (*-w64-mingw32)
         if [ "$ci_local_packages" = yes ]; then
             dep_prefix=$(pwd)/${ci_host}-prefix
+            # Treat any headers found here as though they were part of the OS,
+            # so some compiler warnings get disabled for them
+            export CFLAGS="${CFLAGS-} -isystem $(pwd)/${ci_host}-prefix/include"
         else
             # assume the compiler was configured with a sysroot (e.g. openSUSE)
             sysroot=$("${ci_host}-gcc" --print-sysroot)
@@ -214,12 +217,12 @@ case "$ci_host" in
             fi
             init_wine \
                 "${ci_builddir}/bin" \
-                "${ci_builddir}/subprojects/expat-2.4.8" \
-                "${ci_builddir}/subprojects/glib-2.72.2/gio" \
-                "${ci_builddir}/subprojects/glib-2.72.2/glib" \
-                "${ci_builddir}/subprojects/glib-2.72.2/gmodule" \
-                "${ci_builddir}/subprojects/glib-2.72.2/gobject" \
-                "${ci_builddir}/subprojects/glib-2.72.2/gthread" \
+                "${ci_builddir}"/subprojects/expat-* \
+                "${ci_builddir}"/subprojects/glib-*/gio \
+                "${ci_builddir}"/subprojects/glib-*/glib \
+                "${ci_builddir}"/subprojects/glib-*/gmodule \
+                "${ci_builddir}"/subprojects/glib-*/gobject \
+                "${ci_builddir}"/subprojects/glib-*/gthread \
                 "${dep_prefix}/bin" \
                 ${libgcc_path:+"$libgcc_path"}
         fi
@@ -371,9 +374,12 @@ case "$ci_buildsys" in
                     (*)
                         set -- -Db_sanitize=address,undefined "$@"
 
-                        # https://github.com/mesonbuild/meson/issues/764
                         if [ "$ci_compiler" = "clang" ]; then
+                            # https://github.com/mesonbuild/meson/issues/764
                             set -- -Db_lundef=false "$@"
+
+                            # https://gitlab.freedesktop.org/dbus/dbus/-/work_items/578
+                            export CFLAGS="${CFLAGS-} -fno-sanitize=function"
                         fi
 
                         set -- -Db_pie=true "$@"
@@ -465,7 +471,7 @@ case "$ci_buildsys" in
         # This is too slow and verbose to keep enabled at the moment
         export DBUS_TEST_MALLOC_FAILURES=0
 
-        [ "$ci_test" = no ] || meson test --print-errorlogs
+        [ "$ci_test" = no ] || meson test dbus: --print-errorlogs
         DESTDIR=DESTDIR meson install
         ( cd DESTDIR && find . -ls)
 

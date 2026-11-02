@@ -1085,7 +1085,7 @@ _dbus_connection_acquire_io_path (DBusConnection *connection,
   
   if (connection->io_path_acquired)
     {
-      if (timeout_milliseconds != -1)
+      if (timeout_milliseconds >= 0)
         {
           _dbus_verbose ("waiting %d for IO path to be acquirable\n",
                          timeout_milliseconds);
@@ -2510,7 +2510,7 @@ _dbus_connection_block_pending_call (DBusPendingCall *pending)
            */
           _dbus_verbose ("dbus_connection_send_with_reply_and_block() waiting for more memory\n");
 
-          _dbus_memory_pause_based_on_timeout (timeout_milliseconds - elapsed_milliseconds);
+          _dbus_memory_pause_based_on_timeout (-1);
         }
       else
         {          
@@ -2519,7 +2519,7 @@ _dbus_connection_block_pending_call (DBusPendingCall *pending)
                                                   pending,
                                                   DBUS_ITERATION_DO_READING |
                                                   DBUS_ITERATION_BLOCK,
-                                                  timeout_milliseconds - elapsed_milliseconds);
+                                                  -1);
         }
 
       goto recheck_status;

@@ -146,7 +146,7 @@ append_arg (DBusMessageIter *iter, int type, const char *value)
       {
         DBusMessageIter subiter;
 
-        char sig[2] = "\0\0";
+        char sig[2] = { '\0', '\0' };
         char *subtype = strdup (value);
         char *c = NULL;
 
@@ -284,7 +284,7 @@ main (int argc, char *argv[])
   int i;
   DBusBusType type = DBUS_BUS_SESSION;
   const char *dest = NULL;
-  const char *name = NULL;
+  char *name = NULL;
   const char *path = NULL;
   int message_type = DBUS_MESSAGE_TYPE_SIGNAL;
   const char *type_str = NULL;

@@ -548,7 +548,7 @@ if use_glib
             'srcs': [ 'internals/sysdeps.c' ],
             'link': [ libdbus_testutils, ],
             'deps': [ glib, gio, ],
-            'test_deps': [ test_sleep_forever ],
+            'test_deps': [ test_exit, test_sleep_forever ],
         },
         {
             'name': 'syslog',

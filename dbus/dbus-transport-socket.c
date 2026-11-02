@@ -1208,8 +1208,15 @@ socket_do_iteration (DBusTransport *transport,
             do_io_error (transport);
           else
             {
-              dbus_bool_t need_read = (poll_fd.revents & _DBUS_POLLIN) > 0;
-              dbus_bool_t need_write = (poll_fd.revents & _DBUS_POLLOUT) > 0;
+              /* FreeBSD does not deliver POLLERR when the other side gets disconnected.
+               * Instead it delivers POLLHUP that is not coupled with POLLIN nor POLLOUT.
+               * On the input side, treat this as equivalent to the POLLHUP|POLLIN we
+               * would see in this situation on Linux, so that we will enter
+               * do_reading() and detect the end-of-stream condition; and similarly,
+               * on the output side, treat it as equivalent to POLLHUP|POLLOUT.
+               */
+              dbus_bool_t need_read = (poll_fd.revents & (_DBUS_POLLIN | _DBUS_POLLHUP)) > 0;
+              dbus_bool_t need_write = (poll_fd.revents & (_DBUS_POLLOUT | _DBUS_POLLHUP)) > 0;
 	      dbus_bool_t authentication_completed;
 
               _dbus_verbose ("in iteration, need_read=%d need_write=%d\n",
