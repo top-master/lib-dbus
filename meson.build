@@ -610,7 +610,9 @@ else
     cap_ng = dependency('libcap-ng', required: get_option('libaudit'))
     have_libaudit = libaudit.found() and cap_ng.found()
     # For the systemd system unit
-    data_config.set('AMBIENT_CAPS', 'AmbientCapabilities=CAP_AUDIT_WRITE')
+    if have_libaudit
+        data_config.set('AMBIENT_CAPS', 'AmbientCapabilities=CAP_AUDIT_WRITE')
+    endif
 endif
 config.set('HAVE_LIBAUDIT', have_libaudit)
 
