@@ -175,4 +175,7 @@ int bus_connections_get_peak_bus_names_per_conn   (BusConnections *connections);
 int bus_connection_get_peak_match_rules           (DBusConnection *connection);
 int bus_connection_get_peak_bus_names             (DBusConnection *connection);
 
+void bus_message_from_driver_ensure_serial (DBusMessage    *message,
+                                            DBusConnection *addressed_recipient);
+
 #endif /* BUS_CONNECTION_H */

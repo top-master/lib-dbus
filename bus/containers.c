@@ -234,8 +234,12 @@ bus_container_instance_emit_removed (BusContainerInstance *self)
                                      DBUS_INTERFACE_CONTAINERS1,
                                      "InstanceRemoved");
 
-  if (message == NULL ||
-      !dbus_message_set_sender (message, DBUS_SERVICE_DBUS) ||
+  if (message == NULL)
+    goto oom;
+
+  bus_message_from_driver_ensure_serial (message, NULL);
+
+  if (!dbus_message_set_sender (message, DBUS_SERVICE_DBUS) ||
       !dbus_message_append_args (message,
                                  DBUS_TYPE_OBJECT_PATH, &self->path,
                                  DBUS_TYPE_INVALID) ||
