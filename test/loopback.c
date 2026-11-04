@@ -36,6 +36,9 @@
 
 #include <errno.h>
 #include <string.h>
+#ifdef G_OS_UNIX
+#include <sys/socket.h>
+#endif
 
 #include "test-utils-glib.h"
 
@@ -345,6 +348,122 @@ test_connect (Fixture *f,
   dbus_free (address);
 }
 
+#ifdef G_OS_UNIX
+typedef struct {
+  DBusLoop *loop;
+  DBusWatch *write_watch;
+} EpipeWatchData;
+
+static dbus_bool_t
+epipe_add_watch (DBusWatch *watch,
+    void *data)
+{
+  EpipeWatchData *wd = data;
+
+  if (dbus_watch_get_flags (watch) & DBUS_WATCH_WRITABLE)
+    wd->write_watch = watch;
+
+  return _dbus_loop_add_watch (wd->loop, watch);
+}
+
+static void
+epipe_remove_watch (DBusWatch *watch,
+    void *data)
+{
+  EpipeWatchData *wd = data;
+
+  if (watch == wd->write_watch)
+    wd->write_watch = NULL;
+
+  _dbus_loop_remove_watch (wd->loop, watch);
+}
+
+static void
+epipe_toggle_watch (DBusWatch *watch,
+    void *data)
+{
+  EpipeWatchData *wd = data;
+
+  _dbus_loop_toggle_watch (wd->loop, watch);
+}
+#endif
+
+static void
+test_epipe (Fixture *f,
+    gconstpointer addr)
+{
+#ifdef G_OS_UNIX
+  dbus_bool_t have_mem;
+  dbus_uint32_t serial;
+  DBusMessage *outgoing, *incoming;
+  EpipeWatchData wd = { NULL, NULL };
+  int server_fd;
+  int i;
+
+  if (f->skip)
+    return;
+
+  test_connect (f, addr);
+
+  outgoing = dbus_message_new_signal ("/com/example/Hello",
+      "com.example.Hello", "Greeting");
+  g_assert (outgoing != NULL);
+  have_mem = dbus_connection_send (f->client_conn, outgoing, &serial);
+  g_assert (have_mem);
+  dbus_message_unref (outgoing);
+
+  while (g_queue_is_empty (&f->server_messages))
+    test_main_context_iterate (f->ctx, TRUE);
+
+  incoming = g_queue_pop_head (&f->server_messages);
+  dbus_message_unref (incoming);
+
+  /* Replace the client's watch functions so we can inspect the write
+   * watch state after EPIPE. */
+  wd.loop = f->ctx;
+  g_assert_true (dbus_connection_set_watch_functions (f->client_conn,
+      epipe_add_watch, epipe_remove_watch, epipe_toggle_watch,
+      &wd, NULL));
+  g_assert_nonnull (wd.write_watch);
+
+  /* Shut down the server socket so the client gets EPIPE on write. */
+  g_assert_true (dbus_connection_get_socket (f->server_conn, &server_fd));
+  test_connection_shutdown (f->ctx, f->server_conn);
+  shutdown (server_fd, SHUT_RDWR);
+
+  /* Queue a message on the client. dbus_connection_send tries an
+   * immediate write via socket_do_iteration, which hits EPIPE.
+   * check_write_watch then decides whether the write watch is needed.
+   */
+  outgoing = dbus_message_new_signal ("/com/example/Hello",
+      "com.example.Hello", "AfterClose");
+  g_assert (outgoing != NULL);
+  have_mem = dbus_connection_send (f->client_conn, outgoing, &serial);
+  g_assert (have_mem);
+  dbus_message_unref (outgoing);
+
+  g_assert_nonnull (wd.write_watch);
+  g_assert_false (dbus_watch_get_enabled (wd.write_watch));
+
+  /* Iterate until the client disconnects from reading EOF. */
+  for (i = 0; i < 100; i++)
+    {
+      test_main_context_iterate (f->ctx, FALSE);
+
+      if (!dbus_connection_get_is_connected (f->client_conn))
+        break;
+    }
+
+  g_test_message ("Client disconnected after %d iterations", i);
+  g_assert_cmpint (i, <, 100);
+
+  dbus_connection_set_watch_functions (f->client_conn,
+      NULL, NULL, NULL, NULL, NULL);
+#else
+  g_test_skip ("Can't test EPIPE on non-Unix");
+#endif /* G_OS_UNIX */
+}
+
 static void
 test_bad_guid (Fixture *f,
     gconstpointer addr G_GNUC_UNUSED)
@@ -616,6 +735,8 @@ main (int argc,
       unix_runtime_or_fallback, setup_no_runtime, test_connect,
       teardown_no_runtime);
 
+  g_test_add ("/epipe/unix", Fixture, unix_tmpdir, setup,
+      test_epipe, teardown);
   g_test_add ("/message/bad-guid/unix", Fixture, unix_tmpdir, setup,
       test_bad_guid, teardown);
 
