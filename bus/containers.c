@@ -1,6 +1,6 @@
 /* containers.c - restricted bus servers for containers
  *
- * Copyright © 2017 Collabora Ltd.
+ * Copyright © 2017-2023 Collabora Ltd.
  *
  * SPDX-License-Identifier: AFL-2.1 OR GPL-2.0-or-later
  *
@@ -29,17 +29,18 @@
 
 #ifdef DBUS_ENABLE_CONTAINERS
 
-#error This feature is not ready for production use
-
 #ifndef DBUS_UNIX
 # error DBUS_ENABLE_CONTAINERS requires DBUS_UNIX
 #endif
 
 #include <sys/types.h>
+#include <unistd.h>
 
+#include "dbus/dbus-asv-util.h"
 #include "dbus/dbus-hash.h"
 #include "dbus/dbus-message-internal.h"
 #include "dbus/dbus-sysdeps-unix.h"
+#include "dbus/dbus-watch.h"
 
 #include "connection.h"
 #include "dispatch.h"
@@ -47,7 +48,7 @@
 #include "utils.h"
 
 /*
- * A container instance groups together a per-app-container server with
+ * A container server groups together a per-app-container server with
  * all the connections for which it is responsible.
  */
 typedef struct
@@ -55,7 +56,8 @@ typedef struct
   int refcount;
   char *path;
   char *type;
-  char *name;
+  char *app_id;
+  char *instance_id;
   DBusVariant *metadata;
   BusContext *context;
   BusContainers *containers;
@@ -64,16 +66,19 @@ typedef struct
   /* List of owned DBusConnection, removed when the DBusConnection is
    * removed from the bus */
   DBusList *connections;
+  DBusWatch *stop_on_notify_watch;
   unsigned long uid;
+  int stop_on_notify_fd;
   unsigned announced:1;
-} BusContainerInstance;
+  unsigned stop_on_disconnect:1;
+} BusContainerServer;
 
-/* Data attached to a DBusConnection that has created container instances. */
+/* Data attached to a DBusConnection that has created container servers. */
 typedef struct
 {
-  /* List of instances created by this connection; unowned.
-   * The BusContainerInstance removes itself from here on destruction. */
-  DBusList *instances;
+  /* List of servers created by this connection; unowned.
+   * The BusContainerServer removes itself from here on destruction. */
+  DBusList *servers;
 } BusContainerCreatorData;
 
 /* Data slot on DBusConnection, holding BusContainerCreatorData */
@@ -86,16 +91,16 @@ static dbus_int32_t container_creator_data_slot = -1;
 struct BusContainers
 {
   int refcount;
-  /* path borrowed from BusContainerInstance => unowned BusContainerInstance
-   * The BusContainerInstance removes itself from here on destruction. */
-  DBusHashTable *instances_by_path;
+  /* path borrowed from BusContainerServer => unowned BusContainerServer
+   * The BusContainerServer removes itself from here on destruction. */
+  DBusHashTable *servers_by_path;
   /* uid => (void *) (uintptr_t) number of containers */
   DBusHashTable *n_containers_by_user;
   DBusString address_template;
   dbus_uint64_t next_container_id;
 };
 
-/* Data slot on DBusConnection, holding BusContainerInstance */
+/* Data slot on DBusConnection, holding BusContainerServer */
 static dbus_int32_t contained_data_slot = -1;
 
 BusContainers *
@@ -122,7 +127,7 @@ bus_containers_new (void)
     goto oom;
 
   self->refcount = 1;
-  self->instances_by_path = NULL;
+  self->servers_by_path = NULL;
   self->next_container_id = DBUS_UINT64_CONSTANT (0);
   self->address_template = invalid;
 
@@ -195,7 +200,7 @@ bus_containers_unref (BusContainers *self)
 
   if (--self->refcount == 0)
     {
-      _dbus_clear_hash_table (&self->instances_by_path);
+      _dbus_clear_hash_table (&self->servers_by_path);
       _dbus_clear_hash_table (&self->n_containers_by_user);
       _dbus_string_free (&self->address_template);
       dbus_free (self);
@@ -208,8 +213,8 @@ bus_containers_unref (BusContainers *self)
     }
 }
 
-static BusContainerInstance *
-bus_container_instance_ref (BusContainerInstance *self)
+static BusContainerServer *
+bus_container_server_ref (BusContainerServer *self)
 {
   _dbus_assert (self->refcount > 0);
   _dbus_assert (self->refcount < _DBUS_INT_MAX);
@@ -219,7 +224,7 @@ bus_container_instance_ref (BusContainerInstance *self)
 }
 
 static dbus_bool_t
-bus_container_instance_emit_removed (BusContainerInstance *self)
+bus_container_server_emit_removed (BusContainerServer *self)
 {
   BusTransaction *transaction = NULL;
   DBusMessage *message = NULL;
@@ -232,7 +237,7 @@ bus_container_instance_emit_removed (BusContainerInstance *self)
 
   message = dbus_message_new_signal (DBUS_PATH_DBUS,
                                      DBUS_INTERFACE_CONTAINERS1,
-                                     "InstanceRemoved");
+                                     "ServerRemoved");
 
   if (message == NULL)
     goto oom;
@@ -257,7 +262,7 @@ bus_container_instance_emit_removed (BusContainerInstance *self)
        * somehow does happen, we don't want to stay in the OOM-retry loop,
        * because waiting for more memory will not help; so continue to
        * execute the transaction anyway. */
-      _dbus_warn ("Failed to send InstanceRemoved for a reason "
+      _dbus_warn ("Failed to send ServerRemoved for a reason "
                   "other than OOM: %s: %s", error.name, error.message);
       dbus_error_free (&error);
     }
@@ -278,7 +283,30 @@ oom:
 }
 
 static void
-bus_container_instance_unref (BusContainerInstance *self)
+bus_container_server_remove_notify (BusContainerServer *self)
+{
+  DBusWatch *watch;
+
+  /* Transfer the reference to this function */
+  watch = self->stop_on_notify_watch;
+  self->stop_on_notify_watch = NULL;
+
+  if (watch != NULL)
+    {
+      _dbus_loop_remove_watch (bus_context_get_loop (self->context), watch);
+      _dbus_watch_invalidate (watch);
+      _dbus_watch_unref (watch);
+    }
+
+  if (self->stop_on_notify_fd >= 0)
+    {
+      close (self->stop_on_notify_fd);
+      self->stop_on_notify_fd = -1;
+    }
+}
+
+static void
+bus_container_server_unref (BusContainerServer *self)
 {
   _dbus_assert (self->refcount > 0);
 
@@ -286,10 +314,10 @@ bus_container_instance_unref (BusContainerInstance *self)
     {
       BusContainerCreatorData *creator_data;
 
-      /* If we announced the container instance in a reply from
+      /* If we announced the container server in a reply from
        * AddServer() (which is also the time at which it becomes
        * available for the querying methods), then we have to emit
-       * InstanceRemoved for it.
+       * ServerRemoved for it.
        *
        * Similar to bus/connection.c dropping well-known name ownership,
        * this isn't really a situation where we can "fail", because
@@ -297,29 +325,31 @@ bus_container_instance_unref (BusContainerInstance *self)
        * connection disconnecting; so we use a retry loop on OOM. */
       for (; self->announced; _dbus_wait_for_memory ())
         {
-          if (bus_container_instance_emit_removed (self))
+          if (bus_container_server_emit_removed (self))
             self->announced = FALSE;
         }
 
-      /* As long as the server is listening, the BusContainerInstance can't
+      bus_container_server_remove_notify (self);
+
+      /* As long as the server is listening, the BusContainerServer can't
        * be freed, because the DBusServer holds a reference to the
-       * BusContainerInstance */
+       * BusContainerServer */
       _dbus_assert (self->server == NULL);
 
-      /* Similarly, as long as there are connections, the BusContainerInstance
+      /* Similarly, as long as there are connections, the BusContainerServer
        * can't be freed, because each connection holds a reference to the
-       * BusContainerInstance */
+       * BusContainerServer */
       _dbus_assert (self->connections == NULL);
 
       creator_data = dbus_connection_get_data (self->creator,
                                                container_creator_data_slot);
       _dbus_assert (creator_data != NULL);
-      _dbus_list_remove (&creator_data->instances, self);
+      _dbus_list_remove (&creator_data->servers, self);
 
-      /* It's OK to do this even if we were never added to instances_by_path,
+      /* It's OK to do this even if we were never added to servers_by_path,
        * because the paths are globally unique. */
-      if (self->path != NULL && self->containers->instances_by_path != NULL &&
-          _dbus_hash_table_remove_string (self->containers->instances_by_path,
+      if (self->path != NULL && self->containers->servers_by_path != NULL &&
+          _dbus_hash_table_remove_string (self->containers->servers_by_path,
                                           self->path))
         {
           DBusHashIter entry;
@@ -329,7 +359,7 @@ bus_container_instance_unref (BusContainerInstance *self)
                                        (void *) (uintptr_t) self->uid,
                                        FALSE, &entry))
             _dbus_assert_not_reached ("Container should not be placed in "
-                                      "instances_by_path until its "
+                                      "servers_by_path until its "
                                       "n_containers_by_user entry has "
                                       "been allocated");
 
@@ -345,23 +375,26 @@ bus_container_instance_unref (BusContainerInstance *self)
       dbus_connection_unref (self->creator);
       dbus_free (self->path);
       dbus_free (self->type);
-      dbus_free (self->name);
+      dbus_free (self->app_id);
+      dbus_free (self->instance_id);
       dbus_free (self);
     }
 }
 
 static inline void
-bus_clear_container_instance (BusContainerInstance **instance_p)
+bus_clear_container_server (BusContainerServer **server_p)
 {
-  _dbus_clear_pointer_impl (BusContainerInstance, instance_p,
-                            bus_container_instance_unref);
+  _dbus_clear_pointer_impl (BusContainerServer, server_p,
+                            bus_container_server_unref);
 }
 
 static void
-bus_container_instance_stop_listening (BusContainerInstance *self)
+bus_container_server_stop_listening (BusContainerServer *self)
 {
   /* In case the DBusServer holds the last reference to self */
-  bus_container_instance_ref (self);
+  bus_container_server_ref (self);
+
+  bus_container_server_remove_notify (self);
 
   if (self->server != NULL)
     {
@@ -370,16 +403,16 @@ bus_container_instance_stop_listening (BusContainerInstance *self)
       dbus_clear_server (&self->server);
     }
 
-  bus_container_instance_unref (self);
+  bus_container_server_unref (self);
 }
 
-static BusContainerInstance *
-bus_container_instance_new (BusContext *context,
-                            BusContainers *containers,
-                            DBusConnection *creator,
-                            DBusError *error)
+static BusContainerServer *
+bus_container_server_new (BusContext *context,
+                          BusContainers *containers,
+                          DBusConnection *creator,
+                          DBusError *error)
 {
-  BusContainerInstance *self = NULL;
+  BusContainerServer *self = NULL;
   DBusString path = _DBUS_STRING_INIT_INVALID;
 
   _dbus_assert (context != NULL);
@@ -393,7 +426,7 @@ bus_container_instance_new (BusContext *context,
       goto fail;
     }
 
-  self = dbus_new0 (BusContainerInstance, 1);
+  self = dbus_new0 (BusContainerServer, 1);
 
   if (self == NULL)
     {
@@ -403,12 +436,15 @@ bus_container_instance_new (BusContext *context,
 
   self->refcount = 1;
   self->type = NULL;
-  self->name = NULL;
+  self->app_id = NULL;
+  self->instance_id = NULL;
   self->metadata = NULL;
   self->context = bus_context_ref (context);
   self->containers = bus_containers_ref (containers);
   self->server = NULL;
   self->creator = dbus_connection_ref (creator);
+  self->stop_on_notify_fd = -1;
+  self->stop_on_disconnect = TRUE;
 
   if (containers->next_container_id >=
       DBUS_UINT64_CONSTANT (0xFFFFFFFFFFFFFFFF))
@@ -438,7 +474,7 @@ fail:
   _dbus_string_free (&path);
 
   if (self != NULL)
-    bus_container_instance_unref (self);
+    bus_container_server_unref (self);
 
   return NULL;
 }
@@ -446,9 +482,9 @@ fail:
 static void
 bus_container_creator_data_free (BusContainerCreatorData *self)
 {
-  /* Each instance holds a ref to the creator, so there should be
+  /* Each server holds a ref to the creator, so there should be
    * nothing here */
-  _dbus_assert (self->instances == NULL);
+  _dbus_assert (self->servers == NULL);
 
   dbus_free (self);
 }
@@ -478,74 +514,74 @@ allow_same_uid_only (DBusConnection *connection,
 }
 
 static void
-bus_container_instance_lost_connection (BusContainerInstance *instance,
-                                        DBusConnection *connection)
+bus_container_server_lost_connection (BusContainerServer *server,
+                                      DBusConnection *connection)
 {
-  bus_container_instance_ref (instance);
+  bus_container_server_ref (server);
   dbus_connection_ref (connection);
 
   /* This is O(n), but we don't expect to have many connections per
-   * container instance. */
-  if (_dbus_list_remove (&instance->connections, connection))
+   * container server. */
+  if (_dbus_list_remove (&server->connections, connection))
     dbus_connection_unref (connection);
 
   /* We don't set connection's contained_data_slot to NULL, to make sure
    * that once we have marked a connection as belonging to a container,
    * there is no going back: even if we somehow keep a reference to it
    * around, it will never be treated as uncontained. The connection's
-   * reference to the instance will be cleaned up on last-unref, and
-   * the list removal above ensures that the instance does not hold a
+   * reference to the server will be cleaned up on last-unref, and
+   * the list removal above ensures that the server does not hold a
    * circular ref to the connection, so the last-unref will happen. */
 
   dbus_connection_unref (connection);
-  bus_container_instance_unref (instance);
+  bus_container_server_unref (server);
 }
 
 static void
-new_connection_cb (DBusServer     *server,
+new_connection_cb (DBusServer     *lower_level_server,
                    DBusConnection *new_connection,
                    void           *data)
 {
-  BusContainerInstance *instance = data;
-  int limit = bus_context_get_max_connections_per_container (instance->context);
+  BusContainerServer *server = data;
+  int limit = bus_context_get_max_connections_per_container (server->context);
 
   /* This is O(n), but we assume n is small in practice. */
-  if (_dbus_list_get_length (&instance->connections) >= limit)
+  if (_dbus_list_get_length (&server->connections) >= limit)
     {
       /* We can't send this error to the new connection, so just log it */
-      bus_context_log (instance->context, DBUS_SYSTEM_LOG_WARNING,
+      bus_context_log (server->context, DBUS_SYSTEM_LOG_WARNING,
                        "Closing connection to container server "
                        "%s (%s \"%s\") because it would exceed resource limit "
                        "(max_connections_per_container=%d)",
-                       instance->path, instance->type, instance->name, limit);
+                       server->path, server->type, server->app_id, limit);
       return;
     }
 
   if (!dbus_connection_set_data (new_connection, contained_data_slot,
-                                 bus_container_instance_ref (instance),
-                                 (DBusFreeFunction) bus_container_instance_unref))
+                                 bus_container_server_ref (server),
+                                 (DBusFreeFunction) bus_container_server_unref))
     {
-      bus_container_instance_unref (instance);
-      bus_container_instance_lost_connection (instance, new_connection);
+      bus_container_server_unref (server);
+      bus_container_server_lost_connection (server, new_connection);
       return;
     }
 
-  if (_dbus_list_append (&instance->connections, new_connection))
+  if (_dbus_list_append (&server->connections, new_connection))
     {
       dbus_connection_ref (new_connection);
     }
   else
     {
-      bus_container_instance_lost_connection (instance, new_connection);
+      bus_container_server_lost_connection (server, new_connection);
       return;
     }
 
   /* If this fails it logs a warning, so we don't need to do that.
    * We don't know how to undo this, so do it last (apart from things that
    * cannot fail) */
-  if (!bus_context_add_incoming_connection (instance->context, new_connection))
+  if (!bus_context_add_incoming_connection (server->context, new_connection))
     {
-      bus_container_instance_lost_connection (instance, new_connection);
+      bus_container_server_lost_connection (server, new_connection);
       return;
     }
 
@@ -563,7 +599,7 @@ new_connection_cb (DBusServer     *server,
                                            * allow_same_uid_only ensures that
                                            * this cast does not lose
                                            * information */
-                                          (void *) (uintptr_t) instance->uid,
+                                          (void *) (uintptr_t) server->uid,
                                           NULL);
 }
 
@@ -641,8 +677,8 @@ out:
 }
 
 static dbus_bool_t
-bus_container_instance_listen (BusContainerInstance *self,
-                               DBusError            *error)
+bus_container_server_listen (BusContainerServer *self,
+                             DBusError           *error)
 {
   BusContainers *containers = bus_context_get_containers (self->context);
   const char *address;
@@ -669,8 +705,40 @@ bus_container_instance_listen (BusContainerInstance *self,
 
   /* Cannot fail because the memory it uses was already allocated */
   dbus_server_set_new_connection_function (self->server, new_connection_cb,
-                                           bus_container_instance_ref (self),
-                                           (DBusFreeFunction) bus_container_instance_unref);
+                                           bus_container_server_ref (self),
+                                           (DBusFreeFunction) bus_container_server_unref);
+  return TRUE;
+}
+
+static dbus_bool_t
+check_named_parameter_type (DBusMessageIter *variant_iter,
+                            const char *param_name,
+                            int expected_type,
+                            DBusError *error)
+{
+  if (dbus_message_iter_get_arg_type (variant_iter) != expected_type)
+    {
+      dbus_set_error (error, DBUS_ERROR_INVALID_ARGS,
+                      "Named parameter %s should have type '%c', not '%c'",
+                      param_name, expected_type,
+                      dbus_message_iter_get_arg_type (variant_iter));
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
+static dbus_bool_t
+bus_containers_handle_stop_notify (DBusWatch    *watch,
+                                   unsigned int  flags,
+                                   void *data)
+{
+  BusContainerServer *server = data;
+
+  _dbus_assert (watch == server->stop_on_notify_watch);
+  _dbus_verbose ("Stopping %s because notify fd became readable",
+                 server->path);
+  bus_container_server_stop_listening (server);
   return TRUE;
 }
 
@@ -683,12 +751,13 @@ bus_containers_handle_add_server (DBusConnection *connection,
   BusContainerCreatorData *creator_data;
   DBusMessageIter iter;
   DBusMessageIter dict_iter;
-  DBusMessageIter writer;
-  DBusMessageIter array_writer;
+  DBusMessageIter writer = DBUS_MESSAGE_ITER_INIT_CLOSED;
+  DBusMessageIter asv_writer = DBUS_MESSAGE_ITER_INIT_CLOSED;
   const char *type;
-  const char *name;
+  const char *app_id;
+  const char *instance_id;
   const char *path;
-  BusContainerInstance *instance = NULL;
+  BusContainerServer *server = NULL;
   BusContext *context;
   BusContainers *containers;
   char *address = NULL;
@@ -713,7 +782,7 @@ bus_containers_handle_add_server (DBusConnection *connection,
       if (creator_data == NULL)
         goto oom;
 
-      creator_data->instances = NULL;
+      creator_data->servers = NULL;
 
       if (!dbus_connection_set_data (connection, container_creator_data_slot,
                                      creator_data,
@@ -724,13 +793,13 @@ bus_containers_handle_add_server (DBusConnection *connection,
         }
     }
 
-  instance = bus_container_instance_new (context, containers, connection,
-                                         error);
+  server = bus_container_server_new (context, containers, connection,
+                                     error);
 
-  if (instance == NULL)
+  if (server == NULL)
     goto fail;
 
-  if (!dbus_connection_get_unix_user (connection, &instance->uid))
+  if (!dbus_connection_get_unix_user (connection, &server->uid))
     {
       dbus_set_error (error, DBUS_ERROR_FAILED,
                       "Unable to determine user ID of caller");
@@ -738,7 +807,7 @@ bus_containers_handle_add_server (DBusConnection *connection,
     }
 
   /* We already checked this in bus_driver_handle_message() */
-  _dbus_assert (dbus_message_has_signature (message, "ssa{sv}a{sv}"));
+  _dbus_assert (dbus_message_has_signature (message, "sssa{sv}a{sv}"));
 
   /* Argument 0: Container type */
   if (!dbus_message_iter_init (message, &iter))
@@ -746,9 +815,9 @@ bus_containers_handle_add_server (DBusConnection *connection,
 
   _dbus_assert (dbus_message_iter_get_arg_type (&iter) == DBUS_TYPE_STRING);
   dbus_message_iter_get_basic (&iter, &type);
-  instance->type = _dbus_strdup (type);
+  server->type = _dbus_strdup (type);
 
-  if (instance->type == NULL)
+  if (server->type == NULL)
     goto oom;
 
   if (!dbus_validate_interface (type, NULL))
@@ -759,35 +828,47 @@ bus_containers_handle_add_server (DBusConnection *connection,
       goto fail;
     }
 
-  /* Argument 1: Name as defined by container manager */
+  /* Argument 1: app-ID as defined by container manager */
   if (!dbus_message_iter_next (&iter))
     _dbus_assert_not_reached ("Message type was already checked");
 
   _dbus_assert (dbus_message_iter_get_arg_type (&iter) == DBUS_TYPE_STRING);
-  dbus_message_iter_get_basic (&iter, &name);
-  instance->name = _dbus_strdup (name);
+  dbus_message_iter_get_basic (&iter, &app_id);
+  server->app_id = _dbus_strdup (app_id);
 
-  if (instance->name == NULL)
+  if (server->app_id == NULL)
     goto oom;
 
-  /* Argument 2: Metadata as defined by container manager */
+  /* Argument 2: instance-ID as defined by container manager */
+  if (!dbus_message_iter_next (&iter))
+    _dbus_assert_not_reached ("Message type was already checked");
+
+  _dbus_assert (dbus_message_iter_get_arg_type (&iter) == DBUS_TYPE_STRING);
+  dbus_message_iter_get_basic (&iter, &instance_id);
+  server->instance_id = _dbus_strdup (instance_id);
+
+  if (server->instance_id == NULL)
+    goto oom;
+
+  /* Argument 3: Metadata as defined by container manager */
   if (!dbus_message_iter_next (&iter))
     _dbus_assert_not_reached ("Message type was already checked");
 
   _dbus_assert (dbus_message_iter_get_arg_type (&iter) == DBUS_TYPE_ARRAY);
-  instance->metadata = _dbus_variant_read (&iter);
-  _dbus_assert (strcmp (_dbus_variant_get_signature (instance->metadata),
+  server->metadata = _dbus_variant_read (&iter);
+  _dbus_assert (strcmp (_dbus_variant_get_signature (server->metadata),
                         "a{sv}") == 0);
 
-  /* For simplicity we don't count the size of the BusContainerInstance
+  /* For simplicity we don't count the size of the BusContainerServer
    * itself, the object path, lengths, the non-payload parts of the DBusString,
    * NUL terminators and so on. That overhead is O(1) and relatively small.
    * This cannot overflow because all parts came from a message, and messages
    * are constrained to be orders of magnitude smaller than the maximum
    * int value. */
-  metadata_size = _dbus_variant_get_length (instance->metadata) +
+  metadata_size = _dbus_variant_get_length (server->metadata) +
                   (int) strlen (type) +
-                  (int) strlen (name);
+                  (int) strlen (app_id) +
+                  (int) strlen (instance_id);
   limit = bus_context_get_max_container_metadata_bytes (context);
 
   if (metadata_size > limit)
@@ -807,16 +888,19 @@ bus_containers_handle_add_server (DBusConnection *connection,
       goto fail;
     }
 
-  /* Argument 3: Named parameters */
+  /* Argument 4: Named parameters */
   if (!dbus_message_iter_next (&iter))
     _dbus_assert_not_reached ("Message type was already checked");
 
   _dbus_assert (dbus_message_iter_get_arg_type (&iter) == DBUS_TYPE_ARRAY);
   dbus_message_iter_recurse (&iter, &dict_iter);
 
-  while (dbus_message_iter_get_arg_type (&dict_iter) != DBUS_TYPE_INVALID)
+  for (;
+       dbus_message_iter_get_arg_type (&dict_iter) != DBUS_TYPE_INVALID;
+       dbus_message_iter_next (&dict_iter))
     {
       DBusMessageIter pair_iter;
+      DBusMessageIter variant_iter;
       const char *param_name;
 
       _dbus_assert (dbus_message_iter_get_arg_type (&dict_iter) ==
@@ -827,22 +911,75 @@ bus_containers_handle_add_server (DBusConnection *connection,
                     DBUS_TYPE_STRING);
       dbus_message_iter_get_basic (&pair_iter, &param_name);
 
-      /* If we supported any named parameters, we'd copy them into the data
-       * structure here; but we don't, so fail instead. */
-      dbus_set_error (error, DBUS_ERROR_INVALID_ARGS,
-                      "Named parameter %s is not understood", param_name);
-      goto fail;
+      if (!dbus_message_iter_next (&pair_iter))
+        _dbus_assert_not_reached ("dict entry with less than 2 items");
+
+      _dbus_assert (dbus_message_iter_get_arg_type (&pair_iter) ==
+                    DBUS_TYPE_VARIANT);
+      dbus_message_iter_recurse (&pair_iter, &variant_iter);
+
+      if (strcmp (param_name, "StopOnDisconnect") == 0)
+        {
+          dbus_bool_t value;
+
+          if (!check_named_parameter_type (&variant_iter, param_name,
+                                           DBUS_TYPE_BOOLEAN, error))
+            goto fail;
+
+          dbus_message_iter_get_basic (&variant_iter, &value);
+          server->stop_on_disconnect = !!value;
+        }
+      else if (strcmp (param_name, "StopOnNotify") == 0)
+        {
+          if (!check_named_parameter_type (&variant_iter, param_name,
+                                           DBUS_TYPE_UNIX_FD, error))
+            goto fail;
+
+          dbus_message_iter_get_basic (&variant_iter,
+                                       &server->stop_on_notify_fd);
+
+          if (server->stop_on_notify_fd < 0)
+            {
+              dbus_set_error (error, DBUS_ERROR_INVALID_ARGS,
+                              "Unable to retrieve StopOnNotify fd");
+              goto fail;
+            }
+
+          server->stop_on_notify_watch = _dbus_watch_new (server->stop_on_notify_fd,
+                                                          DBUS_WATCH_READABLE,
+                                                          TRUE,   /* enabled */
+                                                          bus_containers_handle_stop_notify,
+                                                          server,
+                                                          NULL);
+
+          if (server->stop_on_notify_watch == NULL ||
+              !_dbus_loop_add_watch (bus_context_get_loop (context),
+                                     server->stop_on_notify_watch))
+            {
+              BUS_SET_OOM (error);
+              goto fail;
+            }
+        }
+      else
+        {
+          dbus_set_error (error, DBUS_ERROR_INVALID_ARGS,
+                          "Named parameter %s is not understood", param_name);
+          goto fail;
+        }
+
+      if (dbus_message_iter_next (&pair_iter))
+        _dbus_assert_not_reached ("dict entry with more than 2 items");
     }
 
   /* End of arguments */
   _dbus_assert (!dbus_message_iter_has_next (&iter));
 
-  if (containers->instances_by_path == NULL)
+  if (containers->servers_by_path == NULL)
     {
-      containers->instances_by_path = _dbus_hash_table_new (DBUS_HASH_STRING,
-                                                            NULL, NULL);
+      containers->servers_by_path = _dbus_hash_table_new (DBUS_HASH_STRING,
+                                                           NULL, NULL);
 
-      if (containers->instances_by_path == NULL)
+      if (containers->servers_by_path == NULL)
         goto oom;
     }
 
@@ -857,7 +994,7 @@ bus_containers_handle_add_server (DBusConnection *connection,
 
   limit = bus_context_get_max_containers (context);
 
-  if (_dbus_hash_table_get_n_entries (containers->instances_by_path) >= limit)
+  if (_dbus_hash_table_get_n_entries (containers->servers_by_path) >= limit)
     {
       DBusError local_error = DBUS_ERROR_INIT;
 
@@ -876,7 +1013,7 @@ bus_containers_handle_add_server (DBusConnection *connection,
   if (!_dbus_hash_iter_lookup (containers->n_containers_by_user,
                                /* We statically assert that a uid fits in a
                                 * uintptr_t, so this can't lose information */
-                               (void *) (uintptr_t) instance->uid, TRUE,
+                               (void *) (uintptr_t) server->uid, TRUE,
                                &n_containers_by_user_entry))
     goto oom;
 
@@ -895,34 +1032,34 @@ bus_containers_handle_add_server (DBusConnection *connection,
                       "(max_containers_per_user=%d)",
                       bus_connection_get_name (connection),
                       bus_connection_get_loginfo (connection),
-                      instance->uid, limit);
+                      server->uid, limit);
       bus_context_log_literal (context, DBUS_SYSTEM_LOG_WARNING,
                                local_error.message);
       dbus_move_error (&local_error, error);
       goto fail;
     }
 
-  if (!_dbus_hash_table_insert_string (containers->instances_by_path,
-                                       instance->path, instance))
+  if (!_dbus_hash_table_insert_string (containers->servers_by_path,
+                                       server->path, server))
     goto oom;
 
   /* This cannot fail (we already allocated the memory) so we can do it after
-   * we already succeeded in adding it to instances_by_path. The matching
-   * decrement is done whenever we remove it from instances_by_path. */
+   * we already succeeded in adding it to servers_by_path. The matching
+   * decrement is done whenever we remove it from servers_by_path. */
   this_user_containers += 1;
   _dbus_hash_iter_set_value (&n_containers_by_user_entry,
                              (void *) this_user_containers);
 
-  if (!_dbus_list_append (&creator_data->instances, instance))
+  if (!_dbus_list_append (&creator_data->servers, server))
     goto oom;
 
   /* This part is separated out because we eventually want to be able to
    * accept a fd-passed server socket in the named parameters, instead of
    * creating our own server, and defer listening on it until later */
-  if (!bus_container_instance_listen (instance, error))
+  if (!bus_container_server_listen (server, error))
     goto fail;
 
-  address = dbus_server_get_address (instance->server);
+  address = dbus_server_get_address (server->server);
 
   if (!dbus_parse_address (address, &entries, &n_entries, error))
     _dbus_assert_not_reached ("listening on unix:dir= should yield a valid address");
@@ -936,40 +1073,34 @@ bus_containers_handle_add_server (DBusConnection *connection,
   reply = dbus_message_new_method_return (message);
 
   if (!dbus_message_append_args (reply,
-                                 DBUS_TYPE_OBJECT_PATH, &instance->path,
+                                 DBUS_TYPE_OBJECT_PATH, &server->path,
                                  DBUS_TYPE_INVALID))
     goto oom;
 
   dbus_message_iter_init_append (reply, &writer);
 
-  if (!dbus_message_iter_open_container (&writer, DBUS_TYPE_ARRAY,
-                                         DBUS_TYPE_BYTE_AS_STRING,
-                                         &array_writer))
+  if (!dbus_message_iter_open_container (&writer, DBUS_TYPE_ARRAY, "{sv}",
+                                         &asv_writer))
     goto oom;
 
-  if (!dbus_message_iter_append_fixed_array (&array_writer, DBUS_TYPE_BYTE,
-                                             &path, strlen (path) + 1))
-    {
-      dbus_message_iter_abandon_container (&writer, &array_writer);
-      goto oom;
-    }
-
-  if (!dbus_message_iter_close_container (&writer, &array_writer))
+  if (!_dbus_asv_add_string (&asv_writer, "Address", address))
     goto oom;
 
-  if (!dbus_message_append_args (reply,
-                                 DBUS_TYPE_STRING, &address,
-                                 DBUS_TYPE_INVALID))
+  if (!_dbus_asv_add_byte_array (&asv_writer, "SocketPath",
+                                 path, strlen (path) + 1))
     goto oom;
 
-  _dbus_assert (dbus_message_has_signature (reply, "oays"));
+  if (!dbus_message_iter_close_container (&writer, &asv_writer))
+    goto oom;
+
+  _dbus_assert (dbus_message_has_signature (reply, "oa{sv}"));
 
   if (! bus_transaction_send_from_driver (transaction, connection, reply))
     goto oom;
 
-  instance->announced = TRUE;
+  server->announced = TRUE;
   dbus_message_unref (reply);
-  bus_container_instance_unref (instance);
+  bus_container_server_unref (server);
   dbus_address_entries_free (entries);
   dbus_free (address);
   return TRUE;
@@ -978,38 +1109,59 @@ oom:
   BUS_SET_OOM (error);
   /* fall through */
 fail:
-  if (instance != NULL)
-    bus_container_instance_stop_listening (instance);
+  dbus_message_iter_abandon_container_if_open (&writer, &asv_writer);
+
+  if (server != NULL)
+    bus_container_server_stop_listening (server);
 
   dbus_clear_message (&reply);
   dbus_clear_address_entries (&entries);
-  bus_clear_container_instance (&instance);
+  bus_clear_container_server (&server);
   dbus_free (address);
   return FALSE;
 }
 
 dbus_bool_t
-bus_containers_supported_arguments_getter (BusContext *context,
+bus_containers_supported_arguments_getter (BusContext *server,
                                            DBusMessageIter *var_iter)
 {
+  /* Please keep these sorted in strcmp (LC_ALL=C sort) order */
+  static const char * const supported[] =
+  {
+    "StopOnDisconnect",
+    "StopOnNotify",
+  };
   DBusMessageIter arr_iter;
+  size_t i;
 
-  /* There are none so far */
-  return dbus_message_iter_open_container (var_iter, DBUS_TYPE_ARRAY,
-                                           DBUS_TYPE_STRING_AS_STRING,
-                                           &arr_iter) &&
-         dbus_message_iter_close_container (var_iter, &arr_iter);
+  if (!dbus_message_iter_open_container (var_iter, DBUS_TYPE_ARRAY,
+                                         DBUS_TYPE_STRING_AS_STRING,
+                                         &arr_iter))
+    return FALSE;
+
+  for (i = 0; i < _DBUS_N_ELEMENTS (supported); i++)
+    {
+      if (!dbus_message_iter_append_basic (&arr_iter,
+                                           DBUS_TYPE_STRING,
+                                           &supported[i]))
+        {
+          dbus_message_iter_abandon_container (var_iter, &arr_iter);
+          return FALSE;
+        }
+    }
+
+  return dbus_message_iter_close_container (var_iter, &arr_iter);
 }
 
 dbus_bool_t
-bus_containers_handle_stop_instance (DBusConnection *connection,
-                                     BusTransaction *transaction,
-                                     DBusMessage    *message,
-                                     DBusError      *error)
+bus_containers_handle_stop_server (DBusConnection *connection,
+                                   BusTransaction *transaction,
+                                   DBusMessage    *message,
+                                   DBusError      *error)
 {
   BusContext *context;
   BusContainers *containers;
-  BusContainerInstance *instance = NULL;
+  BusContainerServer *server = NULL;
   DBusList *iter;
   const char *path;
   unsigned long uid;
@@ -1022,13 +1174,13 @@ bus_containers_handle_stop_instance (DBusConnection *connection,
   context = bus_transaction_get_context (transaction);
   containers = bus_context_get_containers (context);
 
-  if (containers->instances_by_path != NULL)
+  if (containers->servers_by_path != NULL)
     {
-      instance = _dbus_hash_table_lookup_string (containers->instances_by_path,
-                                                 path);
+      server = _dbus_hash_table_lookup_string (containers->servers_by_path,
+                                               path);
     }
 
-  if (instance == NULL)
+  if (server == NULL)
     {
       dbus_set_error (error, DBUS_ERROR_NOT_CONTAINER,
                       "There is no container with path '%s'", path);
@@ -1042,23 +1194,23 @@ bus_containers_handle_stop_instance (DBusConnection *connection,
       goto failed;
     }
 
-  if (uid != instance->uid)
+  if (uid != server->uid)
     {
       dbus_set_error (error, DBUS_ERROR_ACCESS_DENIED,
                       "User %lu cannot stop a container server started by "
-                      "user %lu", uid, instance->uid);
+                      "user %lu", uid, server->uid);
       goto failed;
     }
 
-  bus_container_instance_ref (instance);
-  bus_container_instance_stop_listening (instance);
+  bus_container_server_ref (server);
+  bus_container_server_stop_listening (server);
 
-  for (iter = _dbus_list_get_first_link (&instance->connections);
+  for (iter = _dbus_list_get_first_link (&server->connections);
        iter != NULL;
-       iter = _dbus_list_get_next_link (&instance->connections, iter))
+       iter = _dbus_list_get_next_link (&server->connections, iter))
     dbus_connection_close (iter->data);
 
-  bus_container_instance_unref (instance);
+  bus_container_server_unref (server);
 
   if (!bus_driver_send_ack_reply (connection, transaction, message, error))
     goto failed;
@@ -1078,7 +1230,7 @@ bus_containers_handle_stop_listening (DBusConnection *connection,
 {
   BusContext *context;
   BusContainers *containers;
-  BusContainerInstance *instance = NULL;
+  BusContainerServer *server = NULL;
   const char *path;
   unsigned long uid;
 
@@ -1090,13 +1242,13 @@ bus_containers_handle_stop_listening (DBusConnection *connection,
   context = bus_transaction_get_context (transaction);
   containers = bus_context_get_containers (context);
 
-  if (containers->instances_by_path != NULL)
+  if (containers->servers_by_path != NULL)
     {
-      instance = _dbus_hash_table_lookup_string (containers->instances_by_path,
-                                                 path);
+      server = _dbus_hash_table_lookup_string (containers->servers_by_path,
+                                               path);
     }
 
-  if (instance == NULL)
+  if (server == NULL)
     {
       dbus_set_error (error, DBUS_ERROR_NOT_CONTAINER,
                       "There is no container with path '%s'", path);
@@ -1110,17 +1262,17 @@ bus_containers_handle_stop_listening (DBusConnection *connection,
       goto failed;
     }
 
-  if (uid != instance->uid)
+  if (uid != server->uid)
     {
       dbus_set_error (error, DBUS_ERROR_ACCESS_DENIED,
                       "User %lu cannot stop a container server started by "
-                      "user %lu", uid, instance->uid);
+                      "user %lu", uid, server->uid);
       goto failed;
     }
 
-  bus_container_instance_ref (instance);
-  bus_container_instance_stop_listening (instance);
-  bus_container_instance_unref (instance);
+  bus_container_server_ref (server);
+  bus_container_server_stop_listening (server);
+  bus_container_server_unref (server);
 
   if (!bus_driver_send_ack_reply (connection, transaction, message, error))
     goto failed;
@@ -1137,8 +1289,8 @@ failed:
  * whether to allow sending or receiving a message, which might involve
  * the dbus-daemon itself as a message sender or recipient.
  */
-static BusContainerInstance *
-connection_get_instance (DBusConnection *connection)
+static BusContainerServer *
+connection_get_server (DBusConnection *connection)
 {
   if (connection == NULL)
     return NULL;
@@ -1150,12 +1302,12 @@ connection_get_instance (DBusConnection *connection)
 }
 
 dbus_bool_t
-bus_containers_handle_get_connection_instance (DBusConnection *caller,
-                                               BusTransaction *transaction,
-                                               DBusMessage    *message,
-                                               DBusError      *error)
+bus_containers_handle_get_connection_info (DBusConnection *caller,
+                                           BusTransaction *transaction,
+                                           DBusMessage    *message,
+                                           DBusError      *error)
 {
-  BusContainerInstance *instance;
+  BusContainerServer *server;
   BusDriverFound found;
   DBusConnection *subject;
   DBusMessage *reply = NULL;
@@ -1165,7 +1317,7 @@ bus_containers_handle_get_connection_instance (DBusConnection *caller,
 
   _DBUS_ASSERT_ERROR_IS_CLEAR (error);
 
-  found = bus_driver_get_conn_helper (caller, message, "container instance",
+  found = bus_driver_get_conn_helper (caller, message, "container information",
                                       &bus_name, &subject, error);
 
   switch (found)
@@ -1184,9 +1336,9 @@ bus_containers_handle_get_connection_instance (DBusConnection *caller,
         goto failed;
     }
 
-  instance = connection_get_instance (subject);
+  server = connection_get_server (subject);
 
-  if (instance == NULL)
+  if (server == NULL)
     {
       dbus_set_error (error, DBUS_ERROR_NOT_CONTAINER,
                       "Connection '%s' is not in a container", bus_name);
@@ -1199,7 +1351,7 @@ bus_containers_handle_get_connection_instance (DBusConnection *caller,
     goto oom;
 
   if (!dbus_message_append_args (reply,
-                                 DBUS_TYPE_OBJECT_PATH, &instance->path,
+                                 DBUS_TYPE_OBJECT_PATH, &server->path,
                                  DBUS_TYPE_INVALID))
     goto oom;
 
@@ -1209,7 +1361,7 @@ bus_containers_handle_get_connection_instance (DBusConnection *caller,
                                          &arr_writer))
     goto oom;
 
-  if (!bus_driver_fill_connection_credentials (NULL, instance->creator,
+  if (!bus_driver_fill_connection_credentials (NULL, server->creator,
                                                caller,
                                                &arr_writer))
     {
@@ -1221,14 +1373,15 @@ bus_containers_handle_get_connection_instance (DBusConnection *caller,
     goto oom;
 
   if (!dbus_message_append_args (reply,
-                                 DBUS_TYPE_STRING, &instance->type,
-                                 DBUS_TYPE_STRING, &instance->name,
+                                 DBUS_TYPE_STRING, &server->type,
+                                 DBUS_TYPE_STRING, &server->app_id,
+                                 DBUS_TYPE_STRING, &server->instance_id,
                                  DBUS_TYPE_INVALID))
     goto oom;
 
   dbus_message_iter_init_append (reply, &writer);
 
-  if (!_dbus_variant_write (instance->metadata, &writer))
+  if (!_dbus_variant_write (server->metadata, &writer))
     goto oom;
 
   if (!bus_transaction_send_from_driver (transaction, caller, reply))
@@ -1248,14 +1401,14 @@ failed:
 }
 
 dbus_bool_t
-bus_containers_handle_get_instance_info (DBusConnection *connection,
-                                         BusTransaction *transaction,
-                                         DBusMessage    *message,
-                                         DBusError      *error)
+bus_containers_handle_get_server_info (DBusConnection *connection,
+                                       BusTransaction *transaction,
+                                       DBusMessage    *message,
+                                       DBusError      *error)
 {
   BusContext *context;
   BusContainers *containers;
-  BusContainerInstance *instance = NULL;
+  BusContainerServer *server = NULL;
   DBusMessage *reply = NULL;
   DBusMessageIter writer;
   DBusMessageIter arr_writer;
@@ -1269,13 +1422,13 @@ bus_containers_handle_get_instance_info (DBusConnection *connection,
   context = bus_transaction_get_context (transaction);
   containers = bus_context_get_containers (context);
 
-  if (containers->instances_by_path != NULL)
+  if (containers->servers_by_path != NULL)
     {
-      instance = _dbus_hash_table_lookup_string (containers->instances_by_path,
-                                                 path);
+      server = _dbus_hash_table_lookup_string (containers->servers_by_path,
+                                               path);
     }
 
-  if (instance == NULL)
+  if (server == NULL)
     {
       dbus_set_error (error, DBUS_ERROR_NOT_CONTAINER,
                       "There is no container with path '%s'", path);
@@ -1293,7 +1446,7 @@ bus_containers_handle_get_instance_info (DBusConnection *connection,
                                          &arr_writer))
     goto oom;
 
-  if (!bus_driver_fill_connection_credentials (NULL, instance->creator,
+  if (!bus_driver_fill_connection_credentials (NULL, server->creator,
                                                connection,
                                                &arr_writer))
     {
@@ -1305,14 +1458,15 @@ bus_containers_handle_get_instance_info (DBusConnection *connection,
     goto oom;
 
   if (!dbus_message_append_args (reply,
-                                 DBUS_TYPE_STRING, &instance->type,
-                                 DBUS_TYPE_STRING, &instance->name,
+                                 DBUS_TYPE_STRING, &server->type,
+                                 DBUS_TYPE_STRING, &server->app_id,
+                                 DBUS_TYPE_STRING, &server->instance_id,
                                  DBUS_TYPE_INVALID))
     goto oom;
 
   dbus_message_iter_init_append (reply, &writer);
 
-  if (!_dbus_variant_write (instance->metadata, &writer))
+  if (!_dbus_variant_write (server->metadata, &writer))
     goto oom;
 
   if (!bus_transaction_send_from_driver (transaction, connection, reply))
@@ -1352,7 +1506,7 @@ bus_containers_handle_request_header (DBusConnection *caller,
     }
 
   bus_connection_request_headers (caller,
-                                  BUS_EXTRA_HEADERS_CONTAINER_INSTANCE);
+                                  BUS_EXTRA_HEADERS_CONTAINER_PATH);
   ret = TRUE;
 
 out:
@@ -1363,17 +1517,17 @@ out:
 void
 bus_containers_stop_listening (BusContainers *self)
 {
-  if (self->instances_by_path != NULL)
+  if (self->servers_by_path != NULL)
     {
       DBusHashIter iter;
 
-      _dbus_hash_iter_init (self->instances_by_path, &iter);
+      _dbus_hash_iter_init (self->servers_by_path, &iter);
 
       while (_dbus_hash_iter_next (&iter))
         {
-          BusContainerInstance *instance = _dbus_hash_iter_get_value (&iter);
+          BusContainerServer *server = _dbus_hash_iter_get_value (&iter);
 
-          bus_container_instance_stop_listening (instance);
+          bus_container_server_stop_listening (server);
         }
     }
 }
@@ -1416,7 +1570,7 @@ bus_containers_remove_connection (BusContainers *self,
 {
 #ifdef DBUS_ENABLE_CONTAINERS
   BusContainerCreatorData *creator_data;
-  BusContainerInstance *instance;
+  BusContainerServer *server;
 
   dbus_connection_ref (connection);
   creator_data = dbus_connection_get_data (connection,
@@ -1427,28 +1581,43 @@ bus_containers_remove_connection (BusContainers *self,
       DBusList *iter;
       DBusList *next;
 
-      for (iter = _dbus_list_get_first_link (&creator_data->instances);
+      _dbus_verbose ("Closing connection %s (%s) which has owned at least "
+                     "one server",
+                     bus_connection_get_name (connection),
+                     bus_connection_get_loginfo (connection));
+
+      for (iter = _dbus_list_get_first_link (&creator_data->servers);
            iter != NULL;
            iter = next)
         {
-          instance = iter->data;
+          server = iter->data;
 
           /* Remember where we got to before we do something that might free
-           * iter and instance */
-          next = _dbus_list_get_next_link (&creator_data->instances, iter);
+           * iter and server */
+          next = _dbus_list_get_next_link (&creator_data->servers, iter);
 
-          _dbus_assert (instance->creator == connection);
+          _dbus_assert (server->creator == connection);
 
-          /* This will invalidate iter and instance if there are no open
-           * connections to this instance */
-          bus_container_instance_stop_listening (instance);
+          if (server->stop_on_disconnect)
+            {
+              _dbus_verbose ("Stopping %s", server->path);
+              /* This will invalidate iter and server if there are no open
+               * connections to this server */
+              bus_container_server_stop_listening (server);
+            }
+          else
+            {
+              _dbus_verbose ("Not stopping %s because it was created with "
+                             "StopOnDisconnect=FALSE",
+                             server->path);
+            }
         }
     }
 
-  instance = connection_get_instance (connection);
+  server = connection_get_server (connection);
 
-  if (instance != NULL)
-    bus_container_instance_lost_connection (instance, connection);
+  if (server != NULL)
+    bus_container_server_lost_connection (server, connection);
 
   dbus_connection_unref (connection);
 #endif /* DBUS_ENABLE_CONTAINERS */
@@ -1458,23 +1627,27 @@ dbus_bool_t
 bus_containers_connection_is_contained (DBusConnection *connection,
                                         const char **path,
                                         const char **type,
-                                        const char **name)
+                                        const char **app_id,
+                                        const char **instance_id)
 {
 #ifdef DBUS_ENABLE_CONTAINERS
-  BusContainerInstance *instance;
+  BusContainerServer *server;
 
-  instance = connection_get_instance (connection);
+  server = connection_get_server (connection);
 
-  if (instance != NULL)
+  if (server != NULL)
     {
       if (path != NULL)
-        *path = instance->path;
+        *path = server->path;
 
       if (type != NULL)
-        *type = instance->type;
+        *type = server->type;
 
-      if (name != NULL)
-        *name = instance->name;
+      if (app_id != NULL)
+        *app_id = server->app_id;
+
+      if (instance_id != NULL)
+        *instance_id = server->instance_id;
 
       return TRUE;
     }
