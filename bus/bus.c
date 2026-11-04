@@ -1108,6 +1108,8 @@ bus_context_send_activatable_services_changed (BusContext *context,
       goto out;
     }
 
+  bus_message_from_driver_ensure_serial (message, NULL);
+
   if (!bus_transaction_capture (transaction, NULL, NULL, message))
     {
       BUS_SET_OOM (error);

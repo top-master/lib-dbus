@@ -267,6 +267,8 @@ bus_driver_send_service_owner_changed (const char     *service_name,
 
   _dbus_assert (dbus_message_has_signature (message, "sss"));
 
+  bus_message_from_driver_ensure_serial (message, NULL);
+
   if (!bus_transaction_capture (transaction, NULL, NULL, message))
     goto oom;
 
@@ -1007,7 +1009,8 @@ bus_driver_send_ack_reply (DBusConnection *connection,
 
 /*
  * Send a message from the driver, activating the destination if necessary.
- * The message must already have a destination set.
+ * The message must already have sender and destination set,
+ * but a serial number will be added if necessary.
  */
 static dbus_bool_t
 bus_driver_send_or_activate (BusTransaction *transaction,
@@ -1019,11 +1022,14 @@ bus_driver_send_or_activate (BusTransaction *transaction,
   const char *service_name;
   DBusString service_string;
 
+  _dbus_assert (transaction != NULL);
+  _dbus_assert (message != NULL);
   _DBUS_ASSERT_ERROR_IS_CLEAR (error);
 
   service_name = dbus_message_get_destination (message);
 
   _dbus_assert (service_name != NULL);
+  _dbus_assert (dbus_message_get_sender (message) != NULL);
 
   _dbus_string_init_const (&service_string, service_name);
 
@@ -1038,6 +1044,11 @@ bus_driver_send_or_activate (BusTransaction *transaction,
       BusActivation *activation;
 
       activation = bus_context_get_activation (context);
+
+      /* Assign a serial number as though this was a broadcast,
+       * since we don't yet know who will receive it.
+       * In practice replies are ignored anyway. */
+      bus_message_from_driver_ensure_serial (message, NULL);
 
       if (!bus_transaction_capture (transaction, NULL, NULL, message))
         {
@@ -1059,6 +1070,8 @@ bus_driver_send_or_activate (BusTransaction *transaction,
       DBusConnection *service_conn;
 
       service_conn = bus_service_get_primary_owners_connection (service);
+
+      bus_message_from_driver_ensure_serial (message, service_conn);
 
       if (!bus_transaction_send_from_driver (transaction, service_conn, message))
         {

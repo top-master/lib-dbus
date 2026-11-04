@@ -131,6 +131,42 @@ static void bus_connection_drop_pending_replies (BusConnections  *connections,
 
 static dbus_bool_t expire_incomplete_timeout (void *data);
 
+/* This has the same logic as _dbus_connection_get_next_client_serial(),
+ * but instead of one serial number per connection, the message bus
+ * maintains one global serial number to be used on broadcasts. */
+static dbus_uint32_t
+get_next_broadcast_serial (void)
+{
+  /* Start just before the wrap-around, so that the wrap-around is tested */
+  static dbus_uint32_t next_broadcast_serial = 0xFFFFFFFFu;
+  dbus_uint32_t ret;
+
+  ret = next_broadcast_serial++;
+
+  if (next_broadcast_serial == 0)
+    next_broadcast_serial = 1;
+
+  return ret;
+}
+
+void
+bus_message_from_driver_ensure_serial (DBusMessage    *message,
+                                       DBusConnection *addressed_recipient)
+{
+  if (dbus_message_get_serial (message) == 0)
+    {
+      dbus_uint32_t serial;
+
+      if (addressed_recipient != NULL)
+        serial = _dbus_connection_get_next_client_serial (addressed_recipient);
+      else
+        serial = get_next_broadcast_serial ();
+
+      _dbus_assert (serial != 0);
+      dbus_message_set_serial (message, serial);
+    }
+}
+
 #define BUS_CONNECTION_DATA(connection) (dbus_connection_get_data ((connection), connection_data_slot))
 
 static DBusLoop*
@@ -2249,6 +2285,14 @@ bus_transaction_get_context (BusTransaction  *transaction)
 /**
  * Reserve enough memory to capture the given message if the
  * transaction goes through.
+ *
+ * The message must already have a serial number and a sender.
+ * For messages received from a client, the client was responsible for
+ * assigning a serial number and bus_dispatch() was responsible for
+ * assigning the sender.
+ * For messages generated internally by the dbus-daemon, the source of
+ * the message is responsible for setting the sender to DBUS_SERVICE_DBUS
+ * and assigning a serial number.
  */
 dbus_bool_t
 bus_transaction_capture (BusTransaction *transaction,
@@ -2261,6 +2305,9 @@ bus_transaction_capture (BusTransaction *transaction,
   DBusList *link;
   DBusList *recipients = NULL;
   dbus_bool_t ret = FALSE;
+
+  _dbus_assert (dbus_message_get_serial (message) != 0);
+  _dbus_assert (dbus_message_get_sender (message) != NULL);
 
   connections = bus_context_get_connections (transaction->context);
 
@@ -2323,6 +2370,7 @@ bus_transaction_capture_error_reply (BusTransaction  *transaction,
   if (!dbus_message_set_sender (reply, DBUS_SERVICE_DBUS))
     goto out;
 
+  bus_message_from_driver_ensure_serial (reply, addressed_recipient);
   ret = bus_transaction_capture (transaction, NULL, addressed_recipient, reply);
 
 out:
@@ -2359,13 +2407,7 @@ bus_transaction_send_from_driver (BusTransaction *transaction,
    * connection, when the transaction is committed, but that's too late
    * in this case.
    */
-  if (dbus_message_get_serial (message) == 0)
-    {
-      dbus_uint32_t next_serial;
-
-      next_serial = _dbus_connection_get_next_client_serial (connection);
-      dbus_message_set_serial (message, next_serial);
-    }
+  bus_message_from_driver_ensure_serial (message, connection);
 
   if (bus_connection_is_active (connection))
     {

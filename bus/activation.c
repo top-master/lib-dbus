@@ -2144,6 +2144,11 @@ bus_activation_activate_service (BusActivation  *activation,
           if (service)
             systemd = bus_service_get_primary_owners_connection (service);
 
+          /* If we already have a DBusConnection for systemd, we allocate
+           * a serial number as if for a method call, or if not, we
+          * allocate a serial number as if for a broadcast. */
+          bus_message_from_driver_ensure_serial (message, systemd);
+
           /* Following the general principle of "log early and often",
            * we capture that we *want* to send the activation message, even if
            * systemd is not actually there to receive it yet */
