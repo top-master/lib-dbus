@@ -2424,6 +2424,18 @@ _dbus_read_credentials_socket  (DBusSocket       client_fd,
             uid_read = cred->cmcred_euid;
             break;
           }
+#ifdef SCM_RIGHTS
+        else if (cmsgp->cmsg_level == SOL_SOCKET &&
+                 cmsgp->cmsg_type == SCM_RIGHTS &&
+                 cmsgp->cmsg_len >= CMSG_LEN (0))
+          {
+            size_t i;
+            int *fds = (int *) CMSG_DATA (cmsgp);
+            size_t n = (cmsgp->cmsg_len - CMSG_LEN (0)) / sizeof (int);
+            for (i = 0; i < n; i++)
+              close (fds[i]);
+          }
+#endif
       }
 
 #elif defined(HAVE_GETPEERUCRED)

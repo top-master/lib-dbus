@@ -33,8 +33,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include "dbus/dbus-credentials.h"
 #include "dbus/dbus-sysdeps-unix.h"
 #endif
 
@@ -297,6 +299,78 @@ test_set_all_close_on_exec (Fixture *f,
       g_assert_true (cloexec);
     }
 }
+
+#ifdef HAVE_CMSGCRED
+static void
+test_read_credentials_closes_scm_rights (Fixture *f G_GNUC_UNUSED,
+                                         gconstpointer context G_GNUC_UNUSED)
+{
+  int sp[2];
+  int pipes[2];
+  struct msghdr msg;
+  struct iovec iov;
+  char buf = '\0';
+  union {
+    struct cmsghdr hdr;
+    char data[CMSG_SPACE (sizeof (int))];
+  } cmsg_buf;
+  struct cmsghdr *cmsgp;
+  DBusSocket dbus_fd;
+  DBusCredentials *creds;
+  DBusError error = DBUS_ERROR_INIT;
+  int probe_fd;
+
+  if (socketpair (AF_UNIX, SOCK_STREAM, 0, sp) < 0)
+    g_error ("socketpair: %s", g_strerror (errno));
+
+  if (pipe (pipes) < 0)
+    g_error ("pipe: %s", g_strerror (errno));
+
+  /* Send a nul byte with SCM_RIGHTS carrying a fd, as a malicious
+   * client might during credential exchange. */
+  memset (&msg, 0, sizeof (msg));
+  iov.iov_base = &buf;
+  iov.iov_len = 1;
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  memset (&cmsg_buf, 0, sizeof (cmsg_buf));
+  msg.msg_control = cmsg_buf.data;
+  msg.msg_controllen = CMSG_SPACE (sizeof (int));
+  cmsgp = CMSG_FIRSTHDR (&msg);
+  cmsgp->cmsg_level = SOL_SOCKET;
+  cmsgp->cmsg_type = SCM_RIGHTS;
+  cmsgp->cmsg_len = CMSG_LEN (sizeof (int));
+  memcpy (CMSG_DATA (cmsgp), &pipes[0], sizeof (int));
+
+  g_assert_cmpint (sendmsg (sp[0], &msg, 0), ==, 1);
+
+  close (pipes[0]);
+  close (pipes[1]);
+  close (sp[0]);
+
+  /* Find the next available fd number: this is where the kernel will
+   * place the received SCM_RIGHTS fd. */
+  probe_fd = dup (sp[1]);
+  g_assert_cmpint (probe_fd, >=, 0);
+  close (probe_fd);
+
+  dbus_fd.fd = sp[1];
+  creds = _dbus_credentials_new ();
+  g_assert_nonnull (creds);
+
+  /* On HAVE_CMSGCRED builds, this receives the SCM_RIGHTS fd and should
+   * close it rather than leaving it leaked. */
+  _dbus_read_credentials_socket (dbus_fd, creds, &error);
+  dbus_error_free (&error);
+
+  /* The received fd should have been closed by the fix. */
+  g_assert_cmpint (fcntl (probe_fd, F_GETFD), ==, -1);
+  g_assert_cmpint (errno, ==, EBADF);
+
+  _dbus_credentials_unref (creds);
+  close (sp[1]);
+}
+#endif /* HAVE_CMSGCRED */
 #endif
 
 #if defined(G_OS_UNIX) && defined(DBUS_ENABLE_X11_AUTOLAUNCH) && \
@@ -393,6 +467,11 @@ main (int argc,
               Fixture, NULL, setup, test_close_all, teardown);
   g_test_add ("/sysdeps/set_all_close_on_exec",
               Fixture, NULL, setup, test_set_all_close_on_exec, teardown);
+#ifdef HAVE_CMSGCRED
+  g_test_add ("/sysdeps/read-credentials-closes-scm-rights",
+              Fixture, NULL, setup, test_read_credentials_closes_scm_rights,
+              teardown);
+#endif
 #endif
 #if defined(G_OS_UNIX) && defined(DBUS_ENABLE_X11_AUTOLAUNCH) && \
   defined(DBUS_ENABLE_EMBEDDED_TESTS)
