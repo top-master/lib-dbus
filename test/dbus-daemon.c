@@ -2307,6 +2307,63 @@ test_system_signals (Fixture *f,
 
   dbus_connection_remove_filter (f->left_conn, foo_signal_filter, f);
 }
+
+/*
+ * Assert that a signal with a reply_serial header set is still
+ * delivered under system bus policy, and not incorrectly blocked
+ * by the requested_reply logic.
+ */
+static void
+test_signal_reply_serial (Fixture *f,
+                          gconstpointer context G_GNUC_UNUSED)
+{
+  DBusMessage *m = NULL;
+  DBusMessage *ping = NULL;
+  DBusMessage *ping_reply = NULL;
+
+  if (f->skip)
+    return;
+
+  add_shouted_signal_filter (f);
+
+  dbus_bus_add_match (f->left_conn,
+                      "interface='com.example',member='Shouted'",
+                      &f->e);
+  test_assert_no_error (&f->e);
+
+  m = dbus_message_new_signal ("/", "com.example", "Shouted");
+
+  if (m == NULL)
+    g_error ("OOM");
+
+  if (!dbus_message_set_reply_serial (m, 42))
+    g_error ("OOM");
+
+  f->signal_counter = 0;
+
+  if (!dbus_connection_send (f->right_conn, m, NULL))
+    g_error ("OOM");
+
+  dbus_clear_message (&m);
+
+  /* Use a round-trip to the bus daemon for synchronization. */
+  ping = dbus_message_new_method_call (DBUS_SERVICE_DBUS,
+                                       DBUS_PATH_DBUS,
+                                       DBUS_INTERFACE_PEER,
+                                       "Ping");
+
+  if (ping == NULL)
+    g_error ("OOM");
+
+  ping_reply = test_main_context_call_and_wait (f->ctx, f->left_conn, ping,
+                                                DBUS_TIMEOUT_USE_DEFAULT);
+  g_assert_cmpint (dbus_message_get_type (ping_reply), ==,
+                   DBUS_MESSAGE_TYPE_METHOD_RETURN);
+  dbus_clear_message (&ping);
+  dbus_clear_message (&ping_reply);
+
+  g_assert_cmpuint (f->signal_counter, ==, 1);
+}
 #endif
 #endif
 
@@ -2881,6 +2938,9 @@ main (int argc,
               setup, test_activation_forking, teardown);
   g_test_add ("/system-policy/allow-signals", Fixture, &nearly_system_config,
               setup, test_system_signals, teardown);
+  g_test_add ("/system-policy/signal-with-reply-serial", Fixture,
+              &nearly_system_config,
+              setup, test_signal_reply_serial, teardown);
 #endif
 #endif
 
