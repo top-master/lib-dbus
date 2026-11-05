@@ -240,6 +240,7 @@ set(libdbus_SOURCES
 set(libdbus_HEADERS
     ${DBUS_LIB_HEADERS}
     ${DBUS_SHARED_HEADERS}
+    ${dbusinclude_HEADERS}
 )
 
 if(DEFINED DBUS_LIBRARY_REVISION)

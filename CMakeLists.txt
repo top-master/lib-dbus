@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.15)
 
 # we do not need to have WIN32 defined
 set(CMAKE_LEGACY_CYGWIN_WIN32 0)
@@ -26,6 +26,7 @@ project(dbus
 
 option(DBUS_BUILD_TESTS "enable unit test code" ON)
 option(DBUS_ENABLE_INTRUSIVE_TESTS "enable tests that require insecure extra code in the library and binaries" OFF)
+option(DBUS_ENABLE_CONSUMER_TEST "enable test for a dbus library consumer" OFF)
 
 # replacement for AC_C_BIGENDIAN
 include (TestBigEndian)
@@ -83,6 +84,17 @@ endif()
 option(DBUS_RELOCATABLE "Attempt to make metadata relocatable" ON)
 option(DBUS_ENABLE_PKGCONFIG "Enable pkgconfig support" ON)
 option(ENABLE_VERBOSE_CONFIG "Be verbose on generating config files" OFF)
+
+# Absolute install dirs below the prefix (e.g. set by mingw64-cmake wrappers)
+# are made relative, so that the exported targets stay relocatable.
+foreach(_d BINDIR LIBDIR LIBEXECDIR INCLUDEDIR DATADIR SYSCONFDIR LOCALSTATEDIR)
+    if(IS_ABSOLUTE "${CMAKE_INSTALL_${_d}}")
+        file(RELATIVE_PATH _rel "${CMAKE_INSTALL_PREFIX}" "${CMAKE_INSTALL_${_d}}")
+        if(NOT _rel MATCHES "^\\.\\./" AND NOT _rel STREQUAL "")
+            set(CMAKE_INSTALL_${_d} "${_rel}")
+        endif()
+    endif()
+endforeach()
 
 # For simplicity, we're not relocatable if CMAKE_INSTALL_LIBDIR
 # is something more complicated (e.g. Debian multiarch);
@@ -670,21 +682,14 @@ endif()
 # create cmake find_package related files
 #
 set(INSTALL_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/DBus1)
-if(WIN32)
-    configure_file(cmake/DBus1Config.cmake.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
-else()
-    configure_file(cmake/DBus1Config.pkgconfig.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
-endif()
+configure_file(cmake/DBus1Config.cmake.in "${PROJECT_BINARY_DIR}/DBus1Config.cmake" @ONLY)
 configure_file(cmake/DBus1ConfigVersion.cmake.in "${PROJECT_BINARY_DIR}/DBus1ConfigVersion.cmake" @ONLY)
 install(FILES
     "${PROJECT_BINARY_DIR}/DBus1Config.cmake"
     "${PROJECT_BINARY_DIR}/DBus1ConfigVersion.cmake"
     DESTINATION "${INSTALL_CMAKE_DIR}"
 )
-
-if(WIN32)
-    install(EXPORT DBus1Targets DESTINATION "${INSTALL_CMAKE_DIR}")
-endif()
+install(EXPORT DBus1Targets DESTINATION "${INSTALL_CMAKE_DIR}")
 
 ########### subdirs ###############
 
@@ -729,6 +734,7 @@ message("        cxx compiler:             ${CXX_COMPILER}                     "
 message("        cxxflags:                 ${CMAKE_CXX_FLAGS}                  ")
 message("        cxxflags debug:           ${CMAKE_CXX_FLAGS_DEBUG}            ")
 message("        cxxflags release:         ${CMAKE_CXX_FLAGS_RELEASE}          ")
+message("        cmake version:            ${CMAKE_VERSION}                    ")
 message("        64-bit int:               ${DBUS_INT64_TYPE}                  ")
 message("        32-bit int:               ${DBUS_INT32_TYPE}                  ")
 message("        16-bit int:               ${DBUS_INT16_TYPE}                  ")
@@ -783,6 +789,10 @@ endif()
 
 if(DBUS_ENABLE_INTRUSIVE_TESTS AND DBUS_DISABLE_ASSERT)
     message("NOTE: building with unit tests but without assertions means tests may not properly report failures (this configuration is only useful when doing something like profiling the tests)")
+endif()
+
+if(DBUS_ENABLE_CONSUMER_TEST)
+    message("NOTE: building with dbus library consumer test")
 endif()
 
 if(DBUS_GCOV_ENABLED)

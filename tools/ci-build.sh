@@ -273,6 +273,7 @@ case "$ci_buildsys" in
         esac
 
         set -- "$@" -D DBUS_BUILD_TESTS=ON
+        set -- "$@" -D DBUS_ENABLE_CONSUMER_TEST=ON
 
         case "$ci_variant" in
             (debug)
