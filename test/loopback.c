@@ -30,6 +30,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <gio/gio.h>
 
 #include <dbus/dbus.h>
 #include "dbus/dbus-connection-internal.h"
@@ -627,6 +628,118 @@ test_builtin_filters (Fixture *f,
 }
 
 static void
+test_nonce_tcp_stall (Fixture *f,
+    gconstpointer addr)
+{
+  char *address;
+  DBusAddressEntry **entries;
+  int n_entries;
+  dbus_bool_t ok;
+  const char *host;
+  const char *port_str;
+  guint16 port;
+  GSocket *stalling_socket;
+  GSocketAddress *socket_address;
+  GError *gerror = NULL;
+  GInetAddress *inet_addr;
+  dbus_bool_t have_mem;
+  dbus_uint32_t serial;
+  DBusMessage *outgoing;
+  DBusMessage *incoming;
+
+  if (f->skip)
+    return;
+
+  address = dbus_server_get_address (f->server);
+  g_test_message ("listening at %s", address);
+
+  ok = dbus_parse_address (address, &entries, &n_entries, &f->e);
+  assert_no_error (&f->e);
+  g_assert_true (ok);
+  g_assert_cmpint (n_entries, ==, 1);
+
+  host = dbus_address_entry_get_value (entries[0], "host");
+  port_str = dbus_address_entry_get_value (entries[0], "port");
+  g_assert_nonnull (host);
+  g_assert_nonnull (port_str);
+  port = (guint16) atoi (port_str);
+
+  inet_addr = g_inet_address_new_from_string (host);
+  g_assert_nonnull (inet_addr);
+  socket_address = g_inet_socket_address_new (inet_addr, port);
+
+  stalling_socket = g_socket_new (G_SOCKET_FAMILY_IPV4,
+                                  G_SOCKET_TYPE_STREAM,
+                                  G_SOCKET_PROTOCOL_TCP, &gerror);
+  g_assert_no_error (gerror);
+
+  g_socket_connect (stalling_socket, socket_address, NULL, &gerror);
+  g_assert_no_error (gerror);
+
+  g_object_unref (socket_address);
+  g_object_unref (inet_addr);
+  dbus_address_entries_free (entries);
+
+  /* Iterate the main loop without sending any nonce bytes: the server
+   * should accept the connection, time out the nonce read, and close it
+   * rather than stalling the accept path indefinitely. */
+  while (f->server_conn == NULL)
+    {
+      test_progress ('.');
+      test_main_context_iterate (f->ctx, FALSE);
+
+      if (f->server_conn == NULL)
+        {
+          /* After the nonce timeout, the stalling connection is rejected
+           * and the server is free to accept other connections. */
+          f->client_conn = dbus_connection_open_private (address, &f->e);
+
+          if (f->client_conn != NULL)
+            {
+              test_connection_setup (f->ctx, f->client_conn);
+              break;
+            }
+
+          dbus_error_free (&f->e);
+        }
+    }
+
+  while (f->server_conn == NULL)
+    {
+      test_progress ('.');
+      test_main_context_iterate (f->ctx, TRUE);
+    }
+
+  /* Verify a message can be exchanged on the good connection */
+  outgoing = dbus_message_new_signal ("/com/example/Hello",
+      "com.example.Hello", "Greeting");
+  g_assert_nonnull (outgoing);
+
+  have_mem = dbus_connection_send (f->client_conn, outgoing, &serial);
+  g_assert_true (have_mem);
+  g_assert_cmpuint (serial, !=, 0);
+
+  while (g_queue_is_empty (&f->server_messages))
+    {
+      test_progress ('.');
+      test_main_context_iterate (f->ctx, TRUE);
+    }
+
+  g_assert_cmpuint (g_queue_get_length (&f->server_messages), ==, 1);
+
+  incoming = g_queue_pop_head (&f->server_messages);
+  g_assert_cmpstr (dbus_message_get_interface (incoming), ==,
+      "com.example.Hello");
+  g_assert_cmpstr (dbus_message_get_member (incoming), ==, "Greeting");
+  g_assert_cmpuint (dbus_message_get_serial (incoming), ==, serial);
+
+  dbus_clear_message (&incoming);
+  dbus_clear_message (&outgoing);
+  g_object_unref (stalling_socket);
+  dbus_free (address);
+}
+
+static void
 teardown (Fixture *f,
     gconstpointer addr G_GNUC_UNUSED)
 {
@@ -715,6 +828,8 @@ main (int argc,
       test_connect, teardown);
   g_test_add ("/message/nonce-tcp", Fixture, "nonce-tcp:host=127.0.0.1", setup,
       test_message, teardown);
+  g_test_add ("/stall/nonce-tcp", Fixture, "nonce-tcp:host=127.0.0.1", setup,
+      test_nonce_tcp_stall, teardown);
 
   g_test_add ("/message/bad-guid/tcp", Fixture, "tcp:host=127.0.0.1", setup,
       test_bad_guid, teardown);
