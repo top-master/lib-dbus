@@ -378,6 +378,135 @@ _dbus_write_socket (DBusSocket        fd,
 #endif
 }
 
+#ifdef HAVE_UNIX_FD_PASSING
+/**
+ * Parse m to unpack up to n_fds file descriptors from a SCM_RIGHTS
+ * ancillary message into fds.
+ *
+ * On success, fds is populated with 0 or more file descriptors,
+ * with the number of fds actually received placed in n_fds,
+ * and they are all close-on-exec.
+ * The caller becomes responsible for closing them.
+ *
+ * If the message was truncated and therefore file descriptors could
+ * have been lost, return FALSE with errno set to ENOSPC and n_fds set to 0.
+ *
+ * @param m the message header from recvmsg
+ * @param fds the buffer to accept fds into
+ * @param fds array to place read file descriptors in
+ * @param n_fds on input space in fds array, on output how many fds actually got read
+ * @returns TRUE on success, FALSE with errno set on failure
+ */
+static dbus_bool_t
+_dbus_socket_unpack_or_close_scm_rights (struct msghdr *m,
+                                         int *fds,
+                                         unsigned int *n_fds)
+{
+  struct cmsghdr *cm;
+  dbus_bool_t found = FALSE;
+
+  for (cm = CMSG_FIRSTHDR (m); cm != NULL; cm = CMSG_NXTHDR (m, cm))
+    {
+      if (cm->cmsg_level == SOL_SOCKET && cm->cmsg_type == SCM_RIGHTS)
+        {
+          size_t i;
+          int *payload = (int *) (void *) CMSG_DATA (cm);
+          size_t payload_len_bytes = (cm->cmsg_len - CMSG_LEN (0));
+          size_t payload_len_fds;
+          size_t fds_to_use;
+
+          /* Every unsigned int fits in a size_t without truncation, so
+           * casting (size_t) *n_fds is OK */
+          _DBUS_STATIC_ASSERT (sizeof (size_t) >= sizeof (unsigned int));
+
+          if ((m->msg_flags & MSG_CTRUNC) &&
+              CMSG_NXTHDR (m, cm) == NULL &&
+              ((char *) payload + payload_len_bytes >
+               (char *) m->msg_control + m->msg_controllen))
+            {
+              /* This is the last cmsg in a truncated message and using
+               * cmsg_len would apparently overrun the allocated buffer.
+               * Some operating systems (illumos and Solaris are known) do
+               * not adjust cmsg_len in the last cmsg when truncation occurs.
+               * Adjust the payload length here. The calculation for
+               * payload_len_fds below will discard any trailing bytes that
+               * belong to an incomplete file descriptor - the kernel will
+               * have already closed that (at least for illumos and Solaris)
+               */
+               payload_len_bytes = m->msg_controllen -
+                 ((char *) payload - (char *) m->msg_control);
+            }
+
+          payload_len_fds = payload_len_bytes / sizeof (int);
+
+          if (_DBUS_LIKELY (payload_len_fds <= (size_t) *n_fds))
+            {
+              /* The fds in the payload will fit in our buffer */
+              fds_to_use = payload_len_fds;
+            }
+          else
+            {
+              /* Too many fds in the payload.
+               * When called from _dbus_read_socket_with_unix_fds(),
+               * this shouldn't happen any more because we're setting
+               * m.msg_controllen to the exact number we can accept,
+               * but be safe and truncate. */
+              fds_to_use = (size_t) *n_fds;
+
+              /* Close the excess fds to avoid DoS: if they stayed open,
+               * someone could send us an extra fd per message
+               * and we'd eventually run out. */
+              for (i = fds_to_use; i < payload_len_fds; i++)
+                {
+                  close (payload[i]);
+                }
+            }
+
+          if (fds_to_use != 0)
+            memcpy (fds, payload, fds_to_use * sizeof (int));
+
+          found = TRUE;
+          /* This narrowing cast from size_t to unsigned int cannot
+           * overflow because we have chosen fds_to_use
+           * to be <= *n_fds */
+          *n_fds = (unsigned int) fds_to_use;
+
+          /* Linux doesn't tell us whether MSG_CMSG_CLOEXEC actually
+             worked, hence we need to go through this list and set
+             CLOEXEC everywhere in any case */
+          for (i = 0; i < fds_to_use; i++)
+            _dbus_fd_set_close_on_exec(fds[i]);
+
+          break;
+        }
+    }
+
+  if (!found)
+    *n_fds = 0;
+
+  if (m->msg_flags & MSG_CTRUNC)
+    {
+      unsigned int i;
+
+      /* Hmm, apparently the control data was truncated. The bad
+         thing is that we might have completely lost a couple of fds
+         without chance to recover them. Hence let's treat this as a
+         serious error. */
+
+      /* We still need to close whatever fds we *did* receive,
+       * otherwise they'll never get closed. (CVE-2020-12049) */
+      for (i = 0; i < *n_fds; i++)
+        close (fds[i]);
+
+      *n_fds = 0;
+      errno = ENOSPC;
+      return FALSE;
+    }
+
+  return TRUE;
+}
+#endif
+
 /**
  * Like _dbus_read_socket() but also tries to read unix fds from the
  * socket. When there are more fds to read than space in the array
@@ -468,98 +597,8 @@ _dbus_read_socket_with_unix_fds (DBusSocket        fd,
     }
   else
     {
-      struct cmsghdr *cm;
-      dbus_bool_t found = FALSE;
-
-      for (cm = CMSG_FIRSTHDR(&m); cm; cm = CMSG_NXTHDR(&m, cm))
-        if (cm->cmsg_level == SOL_SOCKET && cm->cmsg_type == SCM_RIGHTS)
-          {
-            size_t i;
-            int *payload = (int *) (void *) CMSG_DATA (cm);
-            size_t payload_len_bytes = (cm->cmsg_len - CMSG_LEN (0));
-            size_t payload_len_fds;
-            size_t fds_to_use;
-
-            /* Every unsigned int fits in a size_t without truncation, so
-             * casting (size_t) *n_fds is OK */
-            _DBUS_STATIC_ASSERT (sizeof (size_t) >= sizeof (unsigned int));
-
-            if ((m.msg_flags & MSG_CTRUNC) && CMSG_NXTHDR(&m, cm) == NULL &&
-              (char *) payload + payload_len_bytes >
-              (char *) m.msg_control + m.msg_controllen)
-              {
-                /* This is the last cmsg in a truncated message and using
-                 * cmsg_len would apparently overrun the allocated buffer.
-                 * Some operating systems (illumos and Solaris are known) do
-                 * not adjust cmsg_len in the last cmsg when truncation occurs.
-                 * Adjust the payload length here. The calculation for
-                 * payload_len_fds below will discard any trailing bytes that
-                 * belong to an incomplete file descriptor - the kernel will
-                 * have already closed that (at least for illumos and Solaris)
-                 */
-                 payload_len_bytes = m.msg_controllen -
-                   ((char *) payload - (char *) m.msg_control);
-              }
-
-            payload_len_fds = payload_len_bytes / sizeof (int);
-
-            if (_DBUS_LIKELY (payload_len_fds <= (size_t) *n_fds))
-              {
-                /* The fds in the payload will fit in our buffer */
-                fds_to_use = payload_len_fds;
-              }
-            else
-              {
-                /* Too many fds in the payload. This shouldn't happen
-                 * any more because we're setting m.msg_controllen to
-                 * the exact number we can accept, but be safe and
-                 * truncate. */
-                fds_to_use = (size_t) *n_fds;
-
-                /* Close the excess fds to avoid DoS: if they stayed open,
-                 * someone could send us an extra fd per message
-                 * and we'd eventually run out. */
-                for (i = fds_to_use; i < payload_len_fds; i++)
-                  {
-                    close (payload[i]);
-                  }
-              }
-
-            memcpy (fds, payload, fds_to_use * sizeof (int));
-            found = TRUE;
-            /* This narrowing cast from size_t to unsigned int cannot
-             * overflow because we have chosen fds_to_use
-             * to be <= *n_fds */
-            *n_fds = (unsigned int) fds_to_use;
-
-            /* Linux doesn't tell us whether MSG_CMSG_CLOEXEC actually
-               worked, hence we need to go through this list and set
-               CLOEXEC everywhere in any case */
-            for (i = 0; i < fds_to_use; i++)
-              _dbus_fd_set_close_on_exec(fds[i]);
-
-            break;
-          }
-
-      if (!found)
-        *n_fds = 0;
-
-      if (m.msg_flags & MSG_CTRUNC)
+      if (!_dbus_socket_unpack_or_close_scm_rights (&m, fds, n_fds))
         {
-          unsigned int i;
-
-          /* Hmm, apparently the control data was truncated. The bad
-             thing is that we might have completely lost a couple of fds
-             without chance to recover them. Hence let's treat this as a
-             serious error. */
-
-          /* We still need to close whatever fds we *did* receive,
-           * otherwise they'll never get closed. (CVE-2020-12049) */
-          for (i = 0; i < *n_fds; i++)
-            close (fds[i]);
-
-          *n_fds = 0;
-          errno = ENOSPC;
           _dbus_string_set_length (buffer, start);
           return -1;
         }
@@ -2218,11 +2257,22 @@ _dbus_read_credentials_socket  (DBusSocket       client_fd,
   dbus_pid_t pid_read;
   int bytes_read;
   int pid_fd_read;
+  unsigned int n_fds;
 
 #ifdef HAVE_CMSGCRED
   union {
     struct cmsghdr hdr;
     char cred[CMSG_SPACE (sizeof (struct cmsgcred))];
+  } cmsg;
+#elif defined(DBUS_ENABLE_INTRUSIVE_TESTS)
+  /* To reproduce https://gitlab.freedesktop.org/dbus/dbus/-/work_items/588
+   * on other platforms, by behaving as though struct cmsgcred was
+   * supported */
+  union {
+    struct cmsghdr hdr;
+    /* Just some random amount of space that is certainly enough to
+     * hold some file descriptors */
+    char fake_cred[CMSG_SPACE (1024)];
   } cmsg;
 #endif
 
@@ -2254,6 +2304,10 @@ _dbus_read_credentials_socket  (DBusSocket       client_fd,
   _DBUS_ZERO(cmsg);
   msg.msg_control = (caddr_t) &cmsg;
   msg.msg_controllen = CMSG_SPACE (sizeof (struct cmsgcred));
+#elif defined(DBUS_ENABLE_INTRUSIVE_TESTS)
+  _DBUS_ZERO (cmsg);
+  msg.msg_control = &cmsg;
+  msg.msg_controllen = sizeof (cmsg);
 #endif
 
  again:
@@ -2274,7 +2328,22 @@ _dbus_read_credentials_socket  (DBusSocket       client_fd,
                       _dbus_strerror (errno));
       return FALSE;
     }
-  else if (bytes_read == 0)
+
+  n_fds = 0;
+
+  if (!_dbus_socket_unpack_or_close_scm_rights (&msg, NULL, &n_fds))
+    {
+      /* The only way this can currently fail is ENOSPC,
+       * representing MSG_CTRUNC, which would indicate that the message
+       * had more SCM_RIGHTS fds than the 0 we were willing to accept. */
+      dbus_set_error (error, DBUS_ERROR_FAILED,
+                      "Credentials byte should not have had attached file descriptors");
+      return FALSE;
+    }
+
+  _dbus_assert (n_fds == 0);
+
+  if (bytes_read == 0)
     {
       /* this should not happen unless we are using recvmsg wrong,
        * so is essentially here for paranoia

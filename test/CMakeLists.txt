@@ -220,6 +220,13 @@ if(DBUS_WITH_GLIB)
     add_helper_executable(manual-test-thread-blocking thread-blocking.c ${TEST_LIBRARIES})
 endif()
 
+if(DBUS_WITH_GLIB AND
+   HAVE_UNIX_FD_PASSING AND
+   UNIX AND
+   DBUS_ENABLE_INTRUSIVE_TESTS)
+    add_test_executable(test-scm-rights internals/scm-rights.c ${TEST_LIBRARIES})
+endif()
+
 ### keep these in creation order, i.e. uppermost dirs first 
 set(TESTDIRS
     data

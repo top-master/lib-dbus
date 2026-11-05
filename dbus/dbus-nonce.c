@@ -38,6 +38,9 @@ struct DBusNonceFile
   DBusString dir;
 };
 
+/* Bound time spent in nonce pre-auth read to avoid stalling accept path. */
+#define NONCE_READ_TIMEOUT_MS 1000
+
 static dbus_bool_t
 do_check_nonce (DBusSocket fd, const DBusString *nonce, DBusError *error)
 {
@@ -46,6 +49,7 @@ do_check_nonce (DBusSocket fd, const DBusString *nonce, DBusError *error)
   size_t nleft;
   dbus_bool_t result;
   int n;
+  int waited_ms = 0;
 
   _DBUS_ASSERT_ERROR_IS_CLEAR (error);
 
@@ -83,7 +87,18 @@ do_check_nonce (DBusSocket fd, const DBusString *nonce, DBusError *error)
       if (n == -1 && _dbus_get_is_errno_eintr (saved_errno))
         ;
       else if (n == -1 && _dbus_get_is_errno_eagain_or_ewouldblock (saved_errno))
-        _dbus_sleep_milliseconds (100);
+        {
+          if (waited_ms >= NONCE_READ_TIMEOUT_MS)
+            {
+              dbus_set_error (error, DBUS_ERROR_TIMEOUT,
+                              "Timed out while reading nonce");
+              _dbus_string_free (&p);
+              _dbus_string_free (&buffer);
+              return FALSE;
+            }
+          _dbus_sleep_milliseconds (100);
+          waited_ms += 100;
+        }
       else if (n==-1)
         {
           dbus_set_error (error, DBUS_ERROR_IO_ERROR, "Could not read nonce from socket (fd=%" DBUS_SOCKET_FORMAT ")", _dbus_socket_printable (fd));
@@ -193,6 +208,12 @@ _dbus_accept_with_noncefile (DBusSocket listen_fd, const DBusNonceFile *noncefil
 
   if (!_dbus_socket_is_valid (fd))
     goto out;
+
+  if (!_dbus_set_socket_nonblocking (fd, NULL))
+    {
+      _dbus_close_socket (&fd, NULL);
+      goto out;
+    }
 
   if (do_check_nonce(fd, &nonce, NULL) != TRUE) {
     _dbus_verbose ("nonce check failed. Closing socket.\n");

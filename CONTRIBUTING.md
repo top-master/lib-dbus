@@ -27,12 +27,27 @@ git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 ## Reporting security vulnerabilities
 
 If you find a security vulnerability that is not known to the public,
-please report it privately to dbus-security@lists.freedesktop.org
+please report it privately to <dbus-security@lists.freedesktop.org>
 or by reporting a Gitlab issue at
-https://gitlab.freedesktop.org/dbus/dbus/issues/new and marking it
-as "confidential".
-For appropriate patches, please create a "confidential" merge request,
-see [Sending a merge request](#sending-a-merge-request] for details.
+<https://gitlab.freedesktop.org/dbus/dbus/-/work_items/new>
+and marking it as "confidential".
+
+If you are unsure whether a bug is a security vulnerability or not,
+please report it as confidential.
+
+Proposed fixes can be attached to the issue using the output of
+`git format-patch`.
+
+**Please do not create a merge request for undisclosed security vulnerabilities,
+or push proposed changes fixing an undisclosed security vulnerability
+to any public location.**
+
+If you allocate a CVE ID or similar unique identifier for a vulnerability,
+please leave a comment with the CVE ID on the relevant issue report,
+or create a new issue report if necessary
+(marked as confidential if the vulnerability is not yet known to the public).
+The dbus maintainers cannot provide support for CVE IDs that are allocated
+without their knowledge.
 
 ## Mailing list
 
@@ -133,14 +148,14 @@ We won't reject patches that lack S-o-b, but it is strongly recommended.
 
 When you consider your changes to be ready for merging to mainline:
 
+* **If you are working on a fix for an undisclosed security vulnerability,
+  stop here: do not create a merge request.
+  Instead see "Reporting security vulnerabilities", above.**
 * create a personal fork of <https://gitlab.freedesktop.org/dbus/dbus>
   on freedesktop.org Gitlab
 * push your changes to your personal fork as a branch
 * create a merge request at
   <https://gitlab.freedesktop.org/dbus/dbus/merge_requests>
-* Merge requests for "confidential" issues must also be created as
-  "confidential", see <https://docs.gitlab.com/ee/user/project/merge_requests/confidential.html>
-  for details.
 
 ### Security guidelines
 
