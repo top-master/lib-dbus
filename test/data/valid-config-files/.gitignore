@@ -1,3 +1,4 @@
+/allow-eavesdrop.conf
 /as-another-user.conf
 /count-fds.conf
 /debug-allow-all-sha1.conf

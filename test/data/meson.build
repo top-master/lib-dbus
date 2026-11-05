@@ -128,6 +128,7 @@ data_in_to_install = [
     'valid-config-files-system/debug-allow-all-fail.conf',
     'valid-config-files-system/debug-allow-all-pass.conf',
     'valid-config-files-system/tmp-session-like-system.conf',
+    'valid-config-files/allow-eavesdrop.conf',
     'valid-config-files/as-another-user.conf',
     'valid-config-files/count-fds.conf',
     'valid-config-files/debug-allow-all-sha1.conf',
