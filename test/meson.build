@@ -610,6 +610,17 @@ if use_glib
     endif
 endif
 
+if use_glib and has_scm_rights and platform_unix and intrusive_tests
+    tests += [
+        {
+            'name': 'scm-rights',
+            'srcs': [ 'internals/scm-rights.c' ],
+            'link': [ libdbus_testutils, ],
+            'deps': [ glib, gio, ],
+        },
+    ]
+endif
+
 foreach test: tests
     name = test.get('name')
     srcs = test.get('srcs')

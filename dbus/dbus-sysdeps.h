@@ -235,6 +235,7 @@ int         _dbus_write_socket_two (DBusSocket        fd,
                                     int               start2,
                                     int               len2);
 
+DBUS_INTRUSIVE_TESTS_EXPORT
 int _dbus_read_socket_with_unix_fds      (DBusSocket        fd,
                                           DBusString       *buffer,
                                           int               count,
@@ -275,6 +276,7 @@ int _dbus_listen_tcp_socket   (const char     *host,
                                DBusError      *error);
 DBusSocket _dbus_accept       (DBusSocket      listen_fd);
 
+DBUS_INTRUSIVE_TESTS_EXPORT
 dbus_bool_t _dbus_read_credentials_socket (DBusSocket        client_fd,
                                            DBusCredentials  *credentials,
                                            DBusError        *error);
@@ -541,6 +543,7 @@ int         _dbus_get_low_level_socket_errno         (void);
 int         _dbus_save_socket_errno                  (void);
 void        _dbus_restore_socket_errno               (int saved_errno);
 void        _dbus_set_errno_to_zero                  (void);
+DBUS_INTRUSIVE_TESTS_EXPORT
 dbus_bool_t _dbus_get_is_errno_eagain_or_ewouldblock (int e);
 dbus_bool_t _dbus_get_is_errno_enomem                (int e);
 dbus_bool_t _dbus_get_is_errno_eintr                 (int e);
