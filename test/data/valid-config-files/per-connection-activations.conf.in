@@ -1,0 +1,20 @@
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>@TEST_LISTEN@</listen>
+
+  @DBUS_SESSION_CONF_MAYBE_AUTH_EXTERNAL@
+
+  <servicedir>@DBUS_TEST_DATA@/valid-service-files</servicedir>
+
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+
+  <limit name="max_replies_per_connection">3</limit>
+  <limit name="max_pending_service_starts">100</limit>
+  <limit name="service_start_timeout">120000</limit>
+</busconfig>

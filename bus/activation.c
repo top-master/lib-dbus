@@ -1791,6 +1791,31 @@ child_setup (void *user_data)
 }
 #endif
 
+static int
+count_pending_activations_for_connection (BusActivation *activation,
+                                          DBusConnection *connection)
+{
+  DBusHashIter iter;
+  int count = 0;
+
+  _dbus_hash_iter_init (activation->pending_activations, &iter);
+  while (_dbus_hash_iter_next (&iter))
+    {
+      BusPendingActivation *p = _dbus_hash_iter_get_value (&iter);
+      DBusList *link = _dbus_list_get_first_link (&p->entries);
+
+      while (link != NULL)
+        {
+          BusPendingActivationEntry *e = link->data;
+          if (e->connection == connection)
+            count++;
+          link = _dbus_list_get_next_link (&p->entries, link);
+        }
+    }
+
+  return count;
+}
+
 
 /*
  * Try to activate the given service.
@@ -1850,6 +1875,23 @@ bus_activation_activate_service (BusActivation  *activation,
                       "(max_pending_service_starts=%d)",
                       service_name, limit);
       return FALSE;
+    }
+
+  if (connection != NULL)
+    {
+      int per_conn_limit =
+        bus_context_get_max_replies_per_connection (activation->context);
+      int per_conn_count =
+        count_pending_activations_for_connection (activation, connection);
+
+      if (per_conn_count >= per_conn_limit)
+        {
+          dbus_set_error (error, DBUS_ERROR_LIMITS_EXCEEDED,
+                          "The maximum number of pending activations per "
+                          "connection has been reached, activation of %s "
+                          "failed", service_name);
+          return FALSE;
+        }
     }
 
   if (bus_context_get_systemd_activation (activation->context) &&

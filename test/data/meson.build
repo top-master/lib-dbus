@@ -143,6 +143,7 @@ data_in_to_install = [
     'valid-config-files/max-match-rules-per-connection.conf',
     'valid-config-files/max-names-per-connection.conf',
     'valid-config-files/max-replies-per-connection.conf',
+    'valid-config-files/per-connection-activations.conf',
     'valid-config-files/multi-user.conf',
     'valid-config-files/pending-fd-timeout.conf',
     'valid-config-files/send-destination-prefix-rules.conf',
@@ -158,6 +159,7 @@ data_in_to_install = [
     'valid-service-files/org.freedesktop.DBus.TestSuiteSegfaultService.service',
     'valid-service-files/org.freedesktop.DBus.TestSuiteShellEchoServiceFail.service',
     'valid-service-files/org.freedesktop.DBus.TestSuiteShellEchoServiceSuccess.service',
+    'valid-service-files/org.freedesktop.DBus.TestSuiteSleepForeverService.service',
 ]
 
 foreach file : data_to_install
