@@ -3389,7 +3389,7 @@ _dbus_poll (DBusPollFD *fds,
   int max_fd = 0;
   int i;
   struct timeval tv;
-  int ready;
+  int ready = 0;
 
   FD_ZERO (&read_set);
   FD_ZERO (&write_set);
@@ -3398,6 +3398,20 @@ _dbus_poll (DBusPollFD *fds,
   for (i = 0; i < n_fds; i++)
     {
       DBusPollFD *fdp = &fds[i];
+
+      fdp->revents = 0;
+
+      /* poll(2) documents that fd < 0 is ignored
+       * (no events will be reported) */
+      if (fdp->fd < 0)
+        continue;
+
+      if (fdp->fd >= FD_SETSIZE)
+        {
+          fdp->revents = _DBUS_POLLNVAL;
+          ready++;
+          continue;
+        }
 
       if (fdp->events & _DBUS_POLLIN)
 	FD_SET (fdp->fd, &read_set);
@@ -3410,11 +3424,49 @@ _dbus_poll (DBusPollFD *fds,
       max_fd = MAX (max_fd, fdp->fd);
     }
 
+  if (ready > 0)
+    return ready;
+
   tv.tv_sec = timeout_milliseconds / 1000;
   tv.tv_usec = (timeout_milliseconds % 1000) * 1000;
 
   ready = select (max_fd + 1, &read_set, &write_set, &err_set,
                   timeout_milliseconds < 0 ? NULL : &tv);
+
+  if (ready < 0 && errno == EBADF)
+    {
+      ready = 0;
+
+      /* One of the file descriptors we were asked to poll was invalid.
+       * Can we tell which one? */
+      for (i = 0; i < n_fds; i++)
+        {
+          DBusPollFD *fdp = &fds[i];
+          int res;
+
+          res = fcntl (fdp->fd, F_GETFD, 0);
+
+          if (res == -1 && errno == EBADF)
+            {
+              fdp->revents = _DBUS_POLLNVAL;
+              ready++;
+            }
+        }
+
+      if (ready > 0)
+        {
+          /* We can report at least one fd as POLLNVAL. Good enough! */
+          return ready;
+        }
+      else
+        {
+          /* One of the fds was invalid, but when we went back and looked at
+           * them all, none still appeared to be invalid.
+           * Give up and report the error as select() would. */
+          errno = EBADF;
+          return -1;
+        }
+    }
 
   if (ready > 0)
     {
@@ -3422,7 +3474,8 @@ _dbus_poll (DBusPollFD *fds,
 	{
 	  DBusPollFD *fdp = &fds[i];
 
-	  fdp->revents = 0;
+          if (fdp->fd < 0)
+            continue;
 
 	  if (FD_ISSET (fdp->fd, &read_set))
 	    fdp->revents |= _DBUS_POLLIN;
