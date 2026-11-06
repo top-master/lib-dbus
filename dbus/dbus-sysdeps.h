@@ -162,7 +162,11 @@ typedef unsigned long dbus_gid_t;
 #ifdef DBUS_WIN
 
 typedef struct { SOCKET sock; } DBusSocket;
-# define DBUS_SOCKET_FORMAT "Iu"
+# if defined(_WIN64)
+#  define DBUS_SOCKET_FORMAT DBUS_INT64_MODIFIER "u"
+# else
+#  define DBUS_SOCKET_FORMAT "u"
+# endif
 # define DBUS_SOCKET_INIT { INVALID_SOCKET }
 
 _DBUS_WARN_UNUSED_RESULT
@@ -367,7 +371,7 @@ void         _dbus_atomic_set_nonzero (DBusAtomic *atomic);
  * use DBusSocket so that the compiler can check we are doing it right.
  */
 typedef DBusSocket DBusPollable;
-# define DBUS_POLLABLE_FORMAT "Iu"
+# define DBUS_POLLABLE_FORMAT DBUS_SOCKET_FORMAT
 
 static inline DBusPollable
 _dbus_socket_get_pollable (DBusSocket s) { return s; }

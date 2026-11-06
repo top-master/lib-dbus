@@ -402,7 +402,7 @@ _dbus_read_socket (DBusSocket        fd,
 
  again:
  
-  _dbus_verbose ("recv: count=%d fd=%Iu\n", count, fd.sock);
+  _dbus_verbose ("recv: count=%d fd=%" DBUS_SOCKET_FORMAT "\n", count, fd.sock);
   bytes_read = recv (fd.sock, data, count, 0);
   
   if (bytes_read == SOCKET_ERROR)
@@ -462,7 +462,7 @@ _dbus_write_socket (DBusSocket        fd,
 
  again:
 
-  _dbus_verbose ("send: len=%d fd=%Iu\n", len, fd.sock);
+  _dbus_verbose ("send: len=%d fd=%" DBUS_SOCKET_FORMAT "\n", len, fd.sock);
   bytes_written = send (fd.sock, data, len, 0);
 
   if (bytes_written == SOCKET_ERROR)
@@ -509,12 +509,12 @@ _dbus_close_socket (DBusSocket *fd,
         goto again;
         
       dbus_set_error (error, _dbus_error_from_errno (errno),
-                      "Could not close socket: socket=%Iu, , %s",
+                      "Could not close socket: socket=%" DBUS_SOCKET_FORMAT ", , %s",
                       fd->sock, _dbus_strerror_from_errno ());
       _dbus_socket_invalidate (fd);
       return FALSE;
     }
-  _dbus_verbose ("socket=%Iu, \n", fd->sock);
+  _dbus_verbose ("socket=%" DBUS_SOCKET_FORMAT ", \n", fd->sock);
 
   _dbus_socket_invalidate (fd);
   return TRUE;
@@ -557,7 +557,7 @@ _dbus_set_socket_nonblocking (DBusSocket      handle,
     {
       DBUS_SOCKET_SET_ERRNO ();
       dbus_set_error (error, _dbus_error_from_errno (errno),
-                      "Failed to set socket %Iu to nonblocking: %s",
+                      "Failed to set socket %" DBUS_SOCKET_FORMAT " to nonblocking: %s",
                       handle.sock, _dbus_strerror_from_errno ());
       return FALSE;
     }
@@ -626,7 +626,7 @@ _dbus_write_socket_two (DBusSocket        fd,
 
  again:
  
-  _dbus_verbose ("WSASend: len1+2=%d+%d fd=%Iu\n", len1, len2, fd.sock);
+  _dbus_verbose ("WSASend: len1+2=%d+%d fd=%" DBUS_SOCKET_FORMAT "\n", len1, len2, fd.sock);
   rc = WSASend (fd.sock,
                 vectors,
                 data2 ? 2 : 1, 
@@ -1146,7 +1146,7 @@ _dbus_socketpair (DBusSocket *fd1,
   fd1->sock = socket1;
   fd2->sock = socket2;
 
-  _dbus_verbose ("full-duplex pipe %Iu:%Iu <-> %Iu:%Iu\n",
+  _dbus_verbose ("full-duplex pipe %" DBUS_SOCKET_FORMAT ":%" DBUS_SOCKET_FORMAT " <-> %" DBUS_SOCKET_FORMAT ":%" DBUS_SOCKET_FORMAT "\n",
                  fd1->sock, socket1, fd2->sock, socket2);
 
   closesocket (temp);
@@ -1185,14 +1185,14 @@ _dbus_dump_fd_events (DBusPollFD *fds, int n_fds)
         goto oom;
 
       if ((fdp->events & _DBUS_POLLIN) &&
-          !_dbus_string_append_printf (&msg, "R:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "R:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
       if ((fdp->events & _DBUS_POLLOUT) &&
-          !_dbus_string_append_printf (&msg, "W:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "W:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
-      if (!_dbus_string_append_printf (&msg, "E:%Iu", fdp->fd.sock))
+      if (!_dbus_string_append_printf (&msg, "E:%" DBUS_SOCKET_FORMAT, fdp->fd.sock))
         goto oom;
     }
 
@@ -1221,15 +1221,15 @@ _dbus_dump_fd_revents (DBusPollFD *fds, int n_fds)
         goto oom;
 
       if ((fdp->revents & _DBUS_POLLIN) &&
-          !_dbus_string_append_printf (&msg, "R:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "R:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
       if ((fdp->revents & _DBUS_POLLOUT) &&
-          !_dbus_string_append_printf (&msg, "W:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "W:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
       if ((fdp->revents & _DBUS_POLLERR) &&
-          !_dbus_string_append_printf (&msg, "E:%Iu", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "E:%" DBUS_SOCKET_FORMAT, fdp->fd.sock))
         goto oom;
     }
 
@@ -1258,15 +1258,15 @@ _dbus_dump_fdset (DBusPollFD *fds, int n_fds, fd_set *read_set, fd_set *write_se
         goto oom;
 
       if (FD_ISSET (fdp->fd.sock, read_set) &&
-          !_dbus_string_append_printf (&msg, "R:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "R:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
       if (FD_ISSET (fdp->fd.sock, write_set) &&
-          !_dbus_string_append_printf (&msg, "W:%Iu ", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "W:%" DBUS_SOCKET_FORMAT " ", fdp->fd.sock))
         goto oom;
 
       if (FD_ISSET (fdp->fd.sock, err_set) &&
-          !_dbus_string_append_printf (&msg, "E:%Iu", fdp->fd.sock))
+          !_dbus_string_append_printf (&msg, "E:%" DBUS_SOCKET_FORMAT, fdp->fd.sock))
         goto oom;
     }
   _dbus_verbose ("%s\n", _dbus_string_get_const_data (&msg));
@@ -2050,7 +2050,7 @@ _dbus_accept  (DBusSocket listen_fd)
         goto retry;
     }
 
-  _dbus_verbose ("client fd %Iu accepted\n", client_fd.sock);
+  _dbus_verbose ("client fd %" DBUS_SOCKET_FORMAT " accepted\n", client_fd.sock);
   
   return client_fd;
 }
