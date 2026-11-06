@@ -74,8 +74,9 @@ variables:
 
 .opensuse-vars:
   variables:
-    FDO_DISTRIBUTION_VERSION: 'leap'
-    FDO_DISTRIBUTION_TAG: "2025-02-27.0-$UPSTREAM_BRANCH"
+    FDO_BASE_IMAGE: "registry.opensuse.org/opensuse/leap:$FDO_DISTRIBUTION_VERSION"
+    FDO_DISTRIBUTION_VERSION: '15.6'
+    FDO_DISTRIBUTION_TAG: "2026-11-06.0-$UPSTREAM_BRANCH"
 
 .freebsd-vars:
   variables:
