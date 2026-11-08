@@ -4209,6 +4209,7 @@ _dbus_message_loader_new (void)
 #ifdef HAVE_UNIX_FD_PASSING
   loader->unix_fds = NULL;
   loader->n_unix_fds = loader->n_unix_fds_allocated = 0;
+  loader->unix_fds_read_end = 0;
   loader->unix_fds_outstanding = FALSE;
 #endif
 
@@ -4363,6 +4364,9 @@ _dbus_message_loader_get_buffer (DBusMessageLoader  *loader,
           remain -= needed;
           offset += needed;
         }
+
+      *max_to_read = 0;
+      *may_read_fds = FALSE;
 #endif
     }
 }
@@ -4449,6 +4453,9 @@ _dbus_message_loader_return_unix_fds(DBusMessageLoader  *loader,
   _dbus_assert(loader->unix_fds_outstanding);
   _dbus_assert(loader->unix_fds + loader->n_unix_fds == fds);
   _dbus_assert(loader->n_unix_fds + n_fds <= loader->n_unix_fds_allocated);
+
+  if (n_fds > 0)
+    loader->unix_fds_read_end = _dbus_string_get_length (&loader->data);
 
   loader->n_unix_fds += n_fds;
   loader->unix_fds_outstanding = FALSE;
@@ -4641,6 +4648,21 @@ load_message (DBusMessageLoader *loader,
     }
 
   _dbus_string_delete (&loader->data, 0, header_len + body_len);
+
+#ifdef HAVE_UNIX_FD_PASSING
+  if (loader->n_unix_fds > 0)
+    {
+      if (loader->unix_fds_read_end > header_len + body_len)
+        loader->unix_fds_read_end -= header_len + body_len;
+      else
+        {
+          close_unix_fds (loader->unix_fds, &loader->n_unix_fds);
+          loader->unix_fds_read_end = 0;
+          if (loader->unix_fds_change)
+            loader->unix_fds_change (loader->unix_fds_change_data);
+        }
+    }
+#endif
 
   /* don't waste more than 2k of memory */
   _dbus_string_compact (&loader->data, 2048);
