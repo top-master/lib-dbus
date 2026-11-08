@@ -45,8 +45,7 @@
 #include "dir-watch.h"
 
 #define MAX_DIRS_TO_WATCH 128
-#define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))
-#define INOTIFY_BUF_LEN (1024 * (INOTIFY_EVENT_SIZE + 16))
+#define INOTIFY_BUF_LEN (1024 * (sizeof(struct inotify_event) + 16))
 
 /* use a static array to avoid handling OOM */
 static int wds[MAX_DIRS_TO_WATCH];
