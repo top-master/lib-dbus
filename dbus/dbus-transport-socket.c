@@ -265,8 +265,13 @@ read_data_into_auth (DBusTransport *transport,
 
   _dbus_auth_get_buffer (transport->auth, &buffer);
   
+#ifdef HAVE_UNIX_FD_PASSING
+  bytes_read = _dbus_read_socket_line (socket_transport->fd,
+                                      buffer, socket_transport->max_bytes_read_per_iteration);
+#else
   bytes_read = _dbus_read_socket (socket_transport->fd,
                                   buffer, socket_transport->max_bytes_read_per_iteration);
+#endif
   saved_errno = _dbus_save_socket_errno ();
 
   _dbus_auth_return_buffer (transport->auth, buffer);
