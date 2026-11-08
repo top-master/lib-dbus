@@ -158,6 +158,14 @@ test_fd (void        *ignored,
 {
   DBusMessage *m = NULL;
   DBusPipe pipe;
+#ifdef HAVE_UNIX_FD_PASSING
+  DBusMessageLoader *loader = NULL;
+  DBusMessage *received = NULL;
+  DBusString *buffer;
+  char *payload = NULL;
+  int payload_len, *fds;
+  unsigned n_fds;
+#endif
 
   _dbus_pipe_init_stdout (&pipe);
 
@@ -171,7 +179,47 @@ test_fd (void        *ignored,
                                  DBUS_TYPE_INVALID))
     goto out;
 
+#ifdef HAVE_UNIX_FD_PASSING
+  dbus_message_set_serial (m, 1);
+  if (!dbus_message_marshal (m, &payload, &payload_len))
+    goto out;
+  loader = _dbus_message_loader_new ();
+  if (loader == NULL)
+    goto out;
+  _dbus_message_loader_get_buffer (loader, &buffer, NULL, NULL);
+  if (!_dbus_string_append_len (buffer, payload, payload_len))
+    {
+      _dbus_message_loader_return_buffer (loader, buffer);
+      goto out;
+    }
+  _dbus_message_loader_return_buffer (loader, buffer);
+  if (!_dbus_message_loader_get_unix_fds (loader, &fds, &n_fds))
+    goto out;
+  g_assert_cmpuint (n_fds, >, 0);
+  if (!dbus_message_get_args (m, NULL,
+          DBUS_TYPE_UNIX_FD, &fds[0], DBUS_TYPE_INVALID))
+    {
+      _dbus_message_loader_return_unix_fds (loader, fds, 0);
+      goto out;
+    }
+  _dbus_message_loader_return_unix_fds (loader, fds, 1);
+
+  while (!_dbus_message_loader_queue_messages (loader))
+    continue;
+  g_assert_false (_dbus_message_loader_get_is_corrupted (loader));
+  received = _dbus_message_loader_pop_message (loader);
+  g_assert_nonnull (received);
+  g_assert_true (dbus_message_contains_unix_fds (received));
+#endif
+
 out:
+#ifdef HAVE_UNIX_FD_PASSING
+  dbus_free (payload);
+  if (received != NULL)
+    dbus_message_unref (received);
+  if (loader != NULL)
+    _dbus_message_loader_unref (loader);
+#endif
   if (m != NULL)
     dbus_message_unref (m);
 

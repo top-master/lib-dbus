@@ -4602,13 +4602,6 @@ load_message (DBusMessageLoader *loader,
           oom = TRUE;
           goto failed;
         }
-
-      message->n_unix_fds_allocated = message->n_unix_fds = n_unix_fds;
-      loader->n_unix_fds -= n_unix_fds;
-      memmove (loader->unix_fds, loader->unix_fds + n_unix_fds, loader->n_unix_fds * sizeof (loader->unix_fds[0]));
-
-      if (loader->unix_fds_change)
-        loader->unix_fds_change (loader->unix_fds_change_data);
     }
   else
     message->unix_fds = NULL;
@@ -4646,6 +4639,18 @@ load_message (DBusMessageLoader *loader,
       oom = TRUE;
       goto failed;
     }
+
+#ifdef HAVE_UNIX_FD_PASSING
+  if (n_unix_fds > 0)
+    {
+      message->n_unix_fds_allocated = message->n_unix_fds = n_unix_fds;
+      loader->n_unix_fds -= n_unix_fds;
+      memmove (loader->unix_fds, loader->unix_fds + n_unix_fds, loader->n_unix_fds * sizeof (loader->unix_fds[0]));
+
+      if (loader->unix_fds_change)
+        loader->unix_fds_change (loader->unix_fds_change_data);
+    }
+#endif
 
   _dbus_string_delete (&loader->data, 0, header_len + body_len);
 
