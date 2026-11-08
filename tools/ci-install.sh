@@ -326,8 +326,6 @@ case "$ci_distro" in
         ;;
 
     (opensuse*)
-        # test-bus depends on group 'bin'
-        $sudo getent group bin >/dev/null || /usr/sbin/groupadd -r bin
         # Make sure we have a messagebus user, even if the dbus package
         # isn't installed
         getent group messagebus >/dev/null || /usr/sbin/groupadd -r messagebus

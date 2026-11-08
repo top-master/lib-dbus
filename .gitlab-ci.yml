@@ -78,6 +78,10 @@ variables:
     FDO_DISTRIBUTION_VERSION: '15.6'
     FDO_DISTRIBUTION_TAG: "2026-11-06.0-$UPSTREAM_BRANCH"
 
+    # The default tty group doesn't seem to be guaranteed to exist on all
+    # openSUSE container images
+    ci_test_group: 'root'
+
 .freebsd-vars:
   variables:
     BUILD_OS: freebsd

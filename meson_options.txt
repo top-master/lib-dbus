@@ -265,6 +265,13 @@ option(
 )
 
 option(
+  'test_group',
+  type: 'string',
+  description: 'A Unix group name that must exist on the system where tests are run, ignored on Windows',
+  value: 'tty'
+)
+
+option(
   'tools',
   type: 'boolean',
   value: true,

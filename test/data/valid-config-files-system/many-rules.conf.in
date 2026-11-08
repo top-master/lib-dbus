@@ -18,7 +18,7 @@
     <deny send_destination="org.freedesktop.System"/>
     <deny receive_sender="org.freedesktop.System"/>
     <deny user="root"/>
-    <deny group="tty"/>
+    <deny group="@DBUS_TEST_GROUP@"/>
     <allow send_type="error"/>
     <allow send_type="method_call"/>
     <allow send_type="method_return"/>
@@ -38,7 +38,7 @@
     <deny send_destination="org.freedesktop.System"/>
     <deny receive_sender="org.freedesktop.System"/>
     <deny user="root"/>
-    <deny group="tty"/>
+    <deny group="@DBUS_TEST_GROUP@"/>
     <allow send_type="error"/>
     <allow send_type="method_call"/>
     <allow send_type="method_return"/>
@@ -47,7 +47,7 @@
     <deny send_destination="org.freedesktop.Bar" send_interface="org.freedesktop.Foo" send_type="method_call"/>
   </policy>
 
-  <policy group="tty"/>
+  <policy group="@DBUS_TEST_GROUP@"/>
   <policy at_console="true"/>
   <policy at_console="false"/>
 
