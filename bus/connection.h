@@ -129,6 +129,8 @@ dbus_bool_t bus_connection_be_monitor (DBusConnection  *connection,
                                        DBusList       **rules,
                                        DBusError       *error);
 
+void bus_connection_warn_eavesdropping (DBusConnection *connection);
+
 /* transaction API so we can send or not send a block of messages as a whole */
 
 typedef void (* BusTransactionCancelFunction) (void *data);

@@ -1373,6 +1373,8 @@ bus_driver_handle_add_match (DBusConnection *connection,
 
   if (bus_match_rule_get_client_is_eavesdropping (rule))
     {
+      bus_connection_warn_eavesdropping (connection);
+
       if (!bus_driver_check_caller_is_privileged (connection,
                                                   transaction,
                                                   message,

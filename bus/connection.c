@@ -121,6 +121,8 @@ typedef struct
 
   /** non-NULL if and only if this is a monitor */
   DBusList *link_in_monitors;
+
+  unsigned warned_about_eavesdropping : 1;
 } BusConnectionData;
 
 static dbus_bool_t bus_pending_reply_expired (BusExpireList *list,
@@ -3004,4 +3006,21 @@ bus_connection_request_headers (DBusConnection  *connection,
   _dbus_assert (d != NULL);
 
   d->want_headers |= headers;
+}
+
+void
+bus_connection_warn_eavesdropping (DBusConnection *connection)
+{
+  BusConnectionData *d;
+
+  d = BUS_CONNECTION_DATA (connection);
+  _dbus_assert (d != NULL);
+
+  if (!d->warned_about_eavesdropping)
+    {
+      bus_context_log (d->connections->context, DBUS_SYSTEM_LOG_WARNING,
+                       "Connection %s (%s) should not use legacy eavesdropping, deprecated since 2017; use BecomeMonitor() instead",
+                       d->name, d->cached_loginfo_string);
+      d->warned_about_eavesdropping = TRUE;
+    }
 }
