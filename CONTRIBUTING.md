@@ -49,6 +49,8 @@ or create a new issue report if necessary
 The dbus maintainers cannot provide support for CVE IDs that are allocated
 without their knowledge.
 
+Please see [SECURITY.md](SECURITY.md) for more details.
+
 ## Mailing list
 
 The D-Bus mailing list is dbus@lists.freedesktop.org; discussion of
@@ -159,7 +161,14 @@ When you consider your changes to be ready for merging to mainline:
 
 ### Security guidelines
 
-Most of D-Bus is security sensitive.  Guidelines related to that:
+Most of D-Bus is security sensitive.
+
+For backward compatibility and historical reasons,
+some parts of dbus are not feasible to security-support
+(please see [SECURITY.md](SECURITY.md) for more details),
+but all new code should be written with security in mind.
+
+Guidelines related to that:
 
  - avoid `memcpy()`, `sprintf()`, `strlen()`, `snprintf()`, `strlcat()`,
    `strstr()`, `strtok()`, or any of this stuff. Use `DBusString`.
@@ -221,8 +230,8 @@ tools/ci-build.sh is under this license.
 
 ### Build systems
 
-The primary build system for dbus uses the GNU Autotools suite (Autoconf,
-Automake and Libtool). This build system is strongly recommended for
+The primary build system for dbus uses Meson.
+This build system is strongly recommended for
 Unix OS integrators. It can also be used to compile dbus for Windows
 using the mingw-w64 compiler suite, either by cross-compiling on a Unix
 system or by using an environment like MSYS2 on Windows.
@@ -230,7 +239,10 @@ system or by using an environment like MSYS2 on Windows.
 There is also a CMake build system. This is primarily there to make it
 easier to build dbus on Windows, using either a MSYS2/mingw environment
 or the MSVC compiler from Microsoft Visual Studio. It can also be used
-on a GNU/Linux system, but this is not recommended for OS integrators.
+on a GNU/Linux system, but this is not recommended for OS integrators:
+the reason for it to work and be tested on non-Windows is to make it less
+likely that contributions from Unix developers will break the
+CMake/Windows build.
 
 Changes contributed to dbus must not break the build for either of these
 build systems. It is OK for the CMake build system to support fewer
@@ -292,6 +304,9 @@ intrusive tests adds special code to libdbus and dbus-daemon, some of
 which may harm performance or security. A production version of dbus
 that will be included in an operating system should never have the
 intrusive tests enabled.
+
+Older versions of dbus had "embedded tests",
+which are the same tests that are now referred to as intrusive tests.
 
 If possible, new test coverage should be provided via modular tests,
 preferably using GLib's GTest framework. `test/dbus-daemon.c` is a good
