@@ -4347,7 +4347,7 @@ _dbus_connection_update_dispatch_status_and_unlock (DBusConnection    *connectio
        */
       connection_forget_shared_unlocked (connection);
 
-      if (connection->exit_on_disconnect)
+      if (connection->exit_on_disconnect && !_dbus_is_in_shutdown ())
         {
           CONNECTION_UNLOCK (connection);            
           

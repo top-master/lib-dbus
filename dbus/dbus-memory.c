@@ -790,6 +790,12 @@ dbus_free_string_array (char **str_array)
 int _dbus_current_generation = 1;
 
 /**
+ * _dbus_shutdown_in_progress is used to track whether
+ * dbus_shutdown() is running.
+ */
+static dbus_bool_t _dbus_shutdown_in_progress = FALSE;
+
+/**
  * Represents a function to be called on shutdown.
  */
 typedef struct ShutdownClosure ShutdownClosure;
@@ -849,6 +855,12 @@ _dbus_register_shutdown_func_unlocked (DBusShutdownFunction  func,
   return TRUE;
 }
 
+dbus_bool_t
+_dbus_is_in_shutdown (void)
+{
+  return _dbus_shutdown_in_progress;
+}
+
 /** @} */ /* End of private API docs block */
 
 
@@ -905,6 +917,9 @@ _dbus_register_shutdown_func_unlocked (DBusShutdownFunction  func,
 void
 dbus_shutdown (void)
 {
+  _dbus_assert (!_dbus_shutdown_in_progress);
+  _dbus_shutdown_in_progress = TRUE;
+
   while (registered_globals != NULL)
     {
       ShutdownClosure *c;
@@ -924,9 +939,22 @@ dbus_shutdown (void)
   _dbus_threads_lock_platform_specific ();
   _dbus_current_generation += 1;
   _dbus_threads_unlock_platform_specific ();
+
+  _dbus_shutdown_in_progress = FALSE;
 }
 
 /** @} */ /** End of public API docs block */
+
+#ifdef __has_attribute
+#if __has_attribute(destructor)
+__attribute__((destructor))
+static void
+do_dbus_shutdown (void)
+{
+  dbus_shutdown ();
+}
+#endif
+#endif
 
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
 #include "dbus-test.h"

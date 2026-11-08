@@ -405,6 +405,8 @@ dbus_bool_t _dbus_register_shutdown_func_unlocked (DBusShutdownFunction  functio
 
 extern int _dbus_current_generation;
 
+dbus_bool_t _dbus_is_in_shutdown (void);
+
 /* The weird case convention is to avoid having to change all the callers,
  * which would be quite a mega-patch. */
 typedef enum
