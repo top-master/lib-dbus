@@ -244,12 +244,8 @@ refresh_watches_for_fd (DBusLoop      *loop,
   dbus_bool_t interested = FALSE;
 
   _dbus_assert (_dbus_pollable_is_valid (fd));
-
-  if (watches == NULL)
-    watches = _dbus_hash_table_lookup_pollable (loop->watches, fd);
-
-  if (watches == NULL)
-    return;
+  _dbus_assert (watches != NULL);
+  _dbus_assert (_dbus_hash_table_lookup_pollable (loop->watches, fd) == watches);
 
   for (link = _dbus_list_get_first_link (watches);
       link != NULL;
@@ -305,6 +301,7 @@ _dbus_loop_add_watch (DBusLoop  *loop,
   else
     {
       /* we're modifying, not adding, which can't fail with OOM */
+      _dbus_assert (watches != NULL);
       refresh_watches_for_fd (loop, watches, fd);
     }
 
@@ -317,7 +314,18 @@ void
 _dbus_loop_toggle_watch (DBusLoop          *loop,
                          DBusWatch         *watch)
 {
-  refresh_watches_for_fd (loop, NULL, _dbus_watch_get_pollable (watch));
+  DBusPollable fd;
+  DBusList **watches;
+
+  fd = _dbus_watch_get_pollable (watch);
+  _dbus_assert (_dbus_pollable_is_valid (fd));
+  watches = _dbus_hash_table_lookup_pollable (loop->watches, fd);
+  /* It is a programming error to toggle a watch that wasn't yet added or
+   * was already removed, but if this watch was added successfully,
+   * that implies that there must be a non-empty list of watches */
+  _dbus_assert (watches != NULL);
+
+  refresh_watches_for_fd (loop, watches, _dbus_watch_get_pollable (watch));
 }
 
 void
@@ -693,6 +701,8 @@ _dbus_loop_iterate (DBusLoop     *loop,
           changed = FALSE;
           fd = _dbus_hash_iter_get_pollable_key (&hash_iter);
           watches = _dbus_hash_iter_get_value (&hash_iter);
+          /* Every item in this hash table has a non-null value */
+          _dbus_assert (watches != NULL);
 
           for (link = _dbus_list_get_first_link (watches);
               link != NULL;
@@ -854,7 +864,13 @@ _dbus_loop_iterate (DBusLoop     *loop,
                       loop->depth != orig_depth)
                     {
                       if (any_oom)
-                        refresh_watches_for_fd (loop, NULL, ready_fds[i].fd);
+                        {
+                          watches = _dbus_hash_table_lookup_pollable (loop->watches,
+                                                                      ready_fds[i].fd);
+
+                          if (watches != NULL)
+                            refresh_watches_for_fd (loop, watches, ready_fds[i].fd);
+                        }
 
                       goto next_iteration;
                     }
