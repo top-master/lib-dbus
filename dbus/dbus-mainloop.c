@@ -248,9 +248,8 @@ refresh_watches_for_fd (DBusLoop      *loop,
   if (watches == NULL)
     watches = _dbus_hash_table_lookup_pollable (loop->watches, fd);
 
-  /* we allocated this in the first _dbus_loop_add_watch for the fd, and keep
-   * it until there are none left */
-  _dbus_assert (watches != NULL);
+  if (watches == NULL)
+    return;
 
   for (link = _dbus_list_get_first_link (watches);
       link != NULL;
