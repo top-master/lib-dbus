@@ -4209,7 +4209,6 @@ _dbus_message_loader_new (void)
 #ifdef HAVE_UNIX_FD_PASSING
   loader->unix_fds = NULL;
   loader->n_unix_fds = loader->n_unix_fds_allocated = 0;
-  loader->unix_fds_read_end = 0;
   loader->unix_fds_outstanding = FALSE;
 #endif
 
@@ -4286,8 +4285,8 @@ _dbus_message_loader_get_buffer (DBusMessageLoader  *loader,
   if (max_to_read != NULL)
     {
 #ifdef HAVE_UNIX_FD_PASSING
-      int offset = 0;
-      int remain;
+      DBusValidity validity = DBUS_VALIDITY_UNKNOWN;
+      int remain = _dbus_string_get_length (&loader->data);
       int byte_order;
       int fields_array_len;
       int header_len;
@@ -4298,71 +4297,30 @@ _dbus_message_loader_get_buffer (DBusMessageLoader  *loader,
       *may_read_fds = TRUE;
 
 #ifdef HAVE_UNIX_FD_PASSING
-      /* If we aren't holding onto any fds, we can read as much as we want
-       * (fast path). */
-      if (loader->n_unix_fds == 0)
-        return;
+      /* Ancillary data is not a message boundary on every platform.
+       * Do not read past this message and give its unclaimed fds to the next. */
 
-      /* Slow path: we have a message with some fds in it. We don't want
-       * to start on the next message until this one is out of the way;
-       * otherwise a legitimate sender can keep us processing messages
-       * containing fds, until we disconnect it for having had fds pending
-       * for too long, a limit that is in place to stop malicious senders
-       * from setting up recursive fd-passing that takes up our quota and
-       * will never go away. */
-
-      remain = _dbus_string_get_length (&loader->data);
-
-      while (remain > 0)
+      if (remain < DBUS_MINIMUM_HEADER_SIZE)
         {
-          DBusValidity validity = DBUS_VALIDITY_UNKNOWN;
-          int needed;
+          *max_to_read = DBUS_MINIMUM_HEADER_SIZE - remain;
+          return;
+        }
 
-          /* If 0 < remain < DBUS_MINIMUM_HEADER_SIZE, then we've had at
-           * least the first byte of a message, but we don't know how
-           * much more to read. Only read the rest of the
-           * DBUS_MINIMUM_HEADER_SIZE for now; then we'll know. */
-          if (remain < DBUS_MINIMUM_HEADER_SIZE)
-            {
-              *max_to_read = DBUS_MINIMUM_HEADER_SIZE - remain;
-              *may_read_fds = FALSE;
-              return;
-            }
+      if (!_dbus_header_have_message_untrusted (loader->max_message_size,
+                                                &validity,
+                                                &byte_order,
+                                                &fields_array_len,
+                                                &header_len,
+                                                &body_len,
+                                                &loader->data,
+                                                0,
+                                                remain))
+        {
+          if (validity != DBUS_VALID)
+            return;
 
-          if (!_dbus_header_have_message_untrusted (loader->max_message_size,
-                                                    &validity,
-                                                    &byte_order,
-                                                    &fields_array_len,
-                                                    &header_len,
-                                                    &body_len,
-                                                    &loader->data,
-                                                    offset,
-                                                    remain))
-            {
-              /* If a message in the buffer is invalid, we're going to
-               * disconnect the sender anyway, so reading an arbitrary amount
-               * is fine. */
-              if (validity != DBUS_VALID)
-                return;
-
-              /* We have a partial message, with the
-               * DBUS_MINIMUM_HEADER_SIZE-byte fixed part of the header (which
-               * lets us work out how much more we need), but no more. Read
-               * the rest of the message. */
-              needed = header_len + body_len;
-              _dbus_assert (needed > remain);
-              *max_to_read = needed - remain;
-              *may_read_fds = FALSE;
-              return;
-            }
-
-          /* Skip over entire messages until we have less than a message
-           * remaining. */
-          needed = header_len + body_len;
-          _dbus_assert (needed > DBUS_MINIMUM_HEADER_SIZE);
-          _dbus_assert (remain >= needed);
-          remain -= needed;
-          offset += needed;
+          *max_to_read = header_len + body_len - remain;
+          return;
         }
 
       *max_to_read = 0;
@@ -4453,9 +4411,6 @@ _dbus_message_loader_return_unix_fds(DBusMessageLoader  *loader,
   _dbus_assert(loader->unix_fds_outstanding);
   _dbus_assert(loader->unix_fds + loader->n_unix_fds == fds);
   _dbus_assert(loader->n_unix_fds + n_fds <= loader->n_unix_fds_allocated);
-
-  if (n_fds > 0)
-    loader->unix_fds_read_end = _dbus_string_get_length (&loader->data);
 
   loader->n_unix_fds += n_fds;
   loader->unix_fds_outstanding = FALSE;
@@ -4657,15 +4612,9 @@ load_message (DBusMessageLoader *loader,
 #ifdef HAVE_UNIX_FD_PASSING
   if (loader->n_unix_fds > 0)
     {
-      if (loader->unix_fds_read_end > header_len + body_len)
-        loader->unix_fds_read_end -= header_len + body_len;
-      else
-        {
-          close_unix_fds (loader->unix_fds, &loader->n_unix_fds);
-          loader->unix_fds_read_end = 0;
-          if (loader->unix_fds_change)
-            loader->unix_fds_change (loader->unix_fds_change_data);
-        }
+      close_unix_fds (loader->unix_fds, &loader->n_unix_fds);
+      if (loader->unix_fds_change)
+        loader->unix_fds_change (loader->unix_fds_change_data);
     }
 #endif
 

@@ -852,8 +852,8 @@ do_reading (DBusTransport *transport)
 
       _dbus_message_loader_get_buffer (transport->loader,
                                        &buffer,
-                                       &max_to_read,
-                                       &may_read_unix_fds);
+                                       DBUS_TRANSPORT_CAN_SEND_UNIX_FD (transport) ? &max_to_read : NULL,
+                                       DBUS_TRANSPORT_CAN_SEND_UNIX_FD (transport) ? &may_read_unix_fds : NULL);
 
       if (max_to_read > socket_transport->max_bytes_read_per_iteration)
         max_to_read = socket_transport->max_bytes_read_per_iteration;
