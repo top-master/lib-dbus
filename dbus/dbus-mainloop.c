@@ -252,6 +252,10 @@ refresh_watches_for_fd (DBusLoop      *loop,
    * it until there are none left */
   _dbus_assert (watches != NULL);
 
+  /* If a callback has removed the final watch, nothing remains to refresh. */
+  if (watches == NULL)
+    return;
+
   for (link = _dbus_list_get_first_link (watches);
       link != NULL;
       link = _dbus_list_get_next_link (watches, link))

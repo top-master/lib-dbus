@@ -33,6 +33,7 @@
 #include "dbus/dbus-internals.h"
 #include "dbus/dbus-test.h"
 #include "dbus/dbus-test-tap.h"
+#include "dbus/dbus-watch.h"
 #include "test/test-utils.h"
 
 #ifdef DBUS_UNIX
@@ -951,6 +952,90 @@ _dbus_signature_test (const char *test_data_dir _DBUS_GNUC_UNUSED)
 
 #ifdef DBUS_UNIX
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
+
+typedef struct
+{
+  DBusLoop *loop;
+  DBusWatch *watch_a;
+  DBusWatch *watch_b;
+} RefreshOomData;
+
+static dbus_bool_t
+remove_watches_oom_handler (DBusWatch    *watch,
+                            unsigned int  flags,
+                            void         *data)
+{
+  RefreshOomData *d = data;
+
+  _dbus_loop_remove_watch (d->loop, d->watch_a);
+  _dbus_loop_remove_watch (d->loop, d->watch_b);
+
+  return FALSE;
+}
+
+/**
+ * Regression test for the NULL pointer dereference in
+ * refresh_watches_for_fd(), which could occur when a watch callback
+ * removed all watches for an fd during OOM handling.
+ *
+ * @returns #TRUE on success.
+ */
+static dbus_bool_t
+_dbus_mainloop_test (const char *test_data_dir _DBUS_GNUC_UNUSED)
+{
+  int fds[2];
+  DBusPollable fd;
+  DBusLoop *loop;
+  DBusWatch *watch_a;
+  DBusWatch *watch_b;
+  RefreshOomData handler_data;
+
+  if (pipe (fds) < 0)
+    _dbus_test_fatal ("pipe() failed");
+
+  fd = fds[0];
+  loop = _dbus_loop_new ();
+
+  if (loop == NULL)
+    _dbus_test_fatal ("out of memory");
+
+  handler_data.loop = loop;
+
+  watch_a = _dbus_watch_new (fd, DBUS_WATCH_READABLE, TRUE,
+                             remove_watches_oom_handler,
+                             &handler_data, NULL);
+  if (watch_a == NULL)
+    _dbus_test_fatal ("out of memory");
+
+  watch_b = _dbus_watch_new (fd, DBUS_WATCH_WRITABLE, TRUE,
+                             remove_watches_oom_handler,
+                             &handler_data, NULL);
+  if (watch_b == NULL)
+    _dbus_test_fatal ("out of memory");
+
+  handler_data.watch_a = watch_a;
+  handler_data.watch_b = watch_b;
+
+  if (!_dbus_loop_add_watch (loop, watch_a))
+    _dbus_test_fatal ("out of memory");
+
+  if (!_dbus_loop_add_watch (loop, watch_b))
+    _dbus_test_fatal ("out of memory");
+
+  if (write (fds[1], "x", 1) != 1)
+    _dbus_test_fatal ("write() failed");
+
+  _dbus_loop_iterate (loop, FALSE);
+
+  _dbus_watch_unref (watch_a);
+  _dbus_watch_unref (watch_b);
+  _dbus_loop_unref (loop);
+  close (fds[0]);
+  close (fds[1]);
+
+  return TRUE;
+}
+
 static dbus_bool_t
 _dbus_transport_unix_test (const char *test_data_dir _DBUS_GNUC_UNUSED)
 {
@@ -1054,6 +1139,7 @@ static DBusTestCase tests[] =
 #if defined(DBUS_UNIX)
   { "userdb", _dbus_userdb_test },
 #ifdef DBUS_ENABLE_EMBEDDED_TESTS
+  { "mainloop", _dbus_mainloop_test },
   { "transport-unix", _dbus_transport_unix_test },
 #endif
 #endif
