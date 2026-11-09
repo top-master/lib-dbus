@@ -45,8 +45,7 @@
 #include "dir-watch.h"
 
 #define MAX_DIRS_TO_WATCH 128
-#define INOTIFY_EVENT_SIZE (sizeof(struct inotify_event))
-#define INOTIFY_BUF_LEN (1024 * (INOTIFY_EVENT_SIZE + 16))
+#define INOTIFY_BUF_LEN (1024 * (sizeof(struct inotify_event) + 16))
 
 /* use a static array to avoid handling OOM */
 static int wds[MAX_DIRS_TO_WATCH];
@@ -59,13 +58,14 @@ static DBusLoop *loop = NULL;
 static dbus_bool_t
 _handle_inotify_watch (DBusWatch *passed_watch, unsigned int flags, void *data)
 {
-  char buffer[INOTIFY_BUF_LEN];
+  union
+    {
+      char bytes[INOTIFY_BUF_LEN];
+      struct inotify_event ev;
+    } buffer;
   ssize_t ret = 0;
-#ifdef DBUS_ENABLE_VERBOSE_MODE
-  int i = 0;
-#endif
 
-  ret = read (inotify_fd, buffer, INOTIFY_BUF_LEN);
+  ret = read (inotify_fd, buffer.bytes, INOTIFY_BUF_LEN);
   if (ret < 0)
     _dbus_verbose ("Error reading inotify event: '%s'\n", _dbus_strerror(errno));
   else if (!ret)
@@ -77,15 +77,33 @@ _handle_inotify_watch (DBusWatch *passed_watch, unsigned int flags, void *data)
     }
 
 #ifdef DBUS_ENABLE_VERBOSE_MODE
-  while (i < ret)
+  if (_dbus_is_verbose () && ret > 0)
     {
-      struct inotify_event *ev;
+      size_t bytes_available = (size_t) ret;
 
-      ev = (struct inotify_event *) &buffer[i];
-      i += INOTIFY_EVENT_SIZE + ev->len;
-      if (ev->len)
-        _dbus_verbose ("event name: '%s'\n", ev->name);
-      _dbus_verbose ("inotify event: wd=%d mask=%u cookie=%u len=%u\n", ev->wd, ev->mask, ev->cookie, ev->len);
+      while (bytes_available >= sizeof (struct inotify_event))
+        {
+          size_t len;
+
+          len = sizeof (struct inotify_event) + buffer.ev.len;
+
+          if (bytes_available < len)
+            break;
+
+          if (buffer.ev.len != 0)
+            _dbus_verbose ("event name: '%s'\n", buffer.ev.name);
+
+          _dbus_verbose ("inotify event: wd=%d mask=%u cookie=%u len=%u\n",
+                         buffer.ev.wd,
+                         buffer.ev.mask,
+                         buffer.ev.cookie,
+                         buffer.ev.len);
+
+          if (bytes_available > len)
+            memmove (buffer.bytes, buffer.bytes + len, bytes_available - len);
+
+          bytes_available -= len;
+        }
     }
 #endif
 
