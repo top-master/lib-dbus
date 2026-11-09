@@ -31,13 +31,7 @@
 
 const char bus_no_memory_message[] = "Memory allocation failure in message bus";
 
-void
-bus_connection_dispatch_all_messages (DBusConnection *connection)
-{
-  while (bus_connection_dispatch_one_message (connection))
-    ;
-}
-
+#ifdef DBUS_ENABLE_INTRUSIVE_TESTS
 dbus_bool_t
 bus_connection_dispatch_one_message  (DBusConnection *connection)
 {
@@ -48,3 +42,4 @@ bus_connection_dispatch_one_message  (DBusConnection *connection)
   
   return status == DBUS_DISPATCH_DATA_REMAINS;
 }
+#endif
