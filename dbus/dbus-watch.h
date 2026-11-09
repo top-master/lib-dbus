@@ -56,7 +56,7 @@ DBusWatch* _dbus_watch_new                (DBusPollable      fd,
 DBUS_PRIVATE_EXPORT
 DBusWatch* _dbus_watch_ref                (DBusWatch        *watch);
 DBUS_PRIVATE_EXPORT
-void       _dbus_watch_unref              (DBusWatch        *watch);
+void       _dbus_watch_unref              (void             *p);
 DBUS_PRIVATE_EXPORT
 void       _dbus_watch_invalidate         (DBusWatch        *watch);
 void       _dbus_watch_sanitize_condition (DBusWatch        *watch,

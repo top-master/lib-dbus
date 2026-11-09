@@ -777,8 +777,7 @@ bus_selinux_init_connection_id (DBusConnection *connection,
 DBusHashTable*
 bus_selinux_id_table_new (void)
 {
-  return _dbus_hash_table_new (DBUS_HASH_STRING,
-                               (DBusFreeFunction) dbus_free, NULL);
+  return _dbus_hash_table_new (DBUS_HASH_STRING, dbus_free, NULL);
 }
 
 /** 

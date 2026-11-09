@@ -58,14 +58,17 @@ _dbus_user_info_ref (DBusUserInfo *info)
  * frees the given #DBusUserInfo's members with _dbus_user_info_free()
  * and also calls dbus_free() on the block itself
  *
- * @param info the info
+ * @param p the #DBusUserInfo
  */
 void
-_dbus_user_info_unref (DBusUserInfo *info)
+_dbus_user_info_unref (void *p)
 {
-  if (info == NULL) /* hash table will pass NULL */
+  DBusUserInfo *info;
+
+  if (p == NULL) /* hash table will pass NULL */
     return;
 
+  info = p;
   _dbus_assert (info->refcount > 0);
   _dbus_assert (info->refcount < SIZE_MAX);
 
@@ -84,11 +87,14 @@ _dbus_user_info_unref (DBusUserInfo *info)
  * @param info the info
  */
 void
-_dbus_group_info_unref (DBusGroupInfo *info)
+_dbus_group_info_unref (void *p)
 {
-  if (info == NULL) /* hash table will pass NULL */
+  DBusGroupInfo *info;
+
+  if (p == NULL) /* hash table will pass NULL */
     return;
 
+  info = p;
   _dbus_assert (info->refcount > 0);
   _dbus_assert (info->refcount < SIZE_MAX);
 
@@ -606,24 +612,24 @@ _dbus_user_database_new (void)
   db->refcount = 1;
 
   db->users = _dbus_hash_table_new (DBUS_HASH_UINTPTR,
-                                    NULL, (DBusFreeFunction) _dbus_user_info_unref);
+                                    NULL, _dbus_user_info_unref);
   
   if (db->users == NULL)
     goto failed;
 
   db->groups = _dbus_hash_table_new (DBUS_HASH_UINTPTR,
-                                     NULL, (DBusFreeFunction) _dbus_group_info_unref);
+                                     NULL, _dbus_group_info_unref);
   
   if (db->groups == NULL)
     goto failed;
 
   db->users_by_name = _dbus_hash_table_new (DBUS_HASH_STRING,
-                                            NULL, (DBusFreeFunction) _dbus_user_info_unref);
+                                            NULL, _dbus_user_info_unref);
   if (db->users_by_name == NULL)
     goto failed;
   
   db->groups_by_name = _dbus_hash_table_new (DBUS_HASH_STRING,
-                                             NULL, (DBusFreeFunction) _dbus_group_info_unref);
+                                             NULL, _dbus_group_info_unref);
   if (db->groups_by_name == NULL)
     goto failed;
   

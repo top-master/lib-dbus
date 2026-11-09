@@ -32,6 +32,12 @@
 
 DBUS_BEGIN_DECLS
 
+static inline void
+_dbus_message_unref_free_func (void *p)
+{
+  dbus_message_unref (p);
+}
+
 #ifdef DBUS_ENABLE_VERBOSE_MODE
 void _dbus_message_trace_ref (DBusMessage *message,
                               int          old_refcount,

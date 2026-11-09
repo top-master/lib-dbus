@@ -107,11 +107,13 @@ _dbus_timeout_ref (DBusTimeout *timeout)
  * Decrements the reference count of a DBusTimeout object
  * and finalizes the object if the count reaches zero.
  *
- * @param timeout the timeout object.
+ * @param p the #DBusTimeout object.
  */
 void
-_dbus_timeout_unref (DBusTimeout *timeout)
+_dbus_timeout_unref (void *p)
 {
+  DBusTimeout *timeout = p;
+
   _dbus_assert (timeout != NULL);
   _dbus_assert (timeout->refcount > 0);
   
@@ -192,6 +194,15 @@ struct DBusTimeoutList
   DBusFreeFunction timeout_free_data_function;       /**< Free function for timeout callback data */
 };
 
+static void
+timeout_list_remove_timeout_foreach (void *element,
+                                     void *data)
+{
+  DBusTimeoutList *timeout_list = data;
+
+  timeout_list->remove_timeout_function (element, timeout_list->timeout_data);
+}
+
 /**
  * Creates a new timeout list. Returns #NULL if insufficient
  * memory exists.
@@ -222,8 +233,7 @@ _dbus_timeout_list_free (DBusTimeoutList *timeout_list)
   _dbus_timeout_list_set_functions (timeout_list,
 				    NULL, NULL, NULL, NULL, NULL);
 
-  _dbus_list_clear_full (&timeout_list->timeouts,
-                         (DBusFreeFunction) _dbus_timeout_unref);
+  _dbus_list_clear_full (&timeout_list->timeouts, _dbus_timeout_unref);
 
   dbus_free (timeout_list);
 }
@@ -288,8 +298,8 @@ _dbus_timeout_list_set_functions (DBusTimeoutList           *timeout_list,
   if (timeout_list->remove_timeout_function != NULL)
     {
       _dbus_list_foreach (&timeout_list->timeouts,
-			  (DBusForeachFunction) timeout_list->remove_timeout_function,
-			  timeout_list->timeout_data);
+                          timeout_list_remove_timeout_foreach,
+                          timeout_list);
     }
 
   if (timeout_list->timeout_free_data_function != NULL)

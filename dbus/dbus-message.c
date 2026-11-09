@@ -4245,8 +4245,7 @@ _dbus_message_loader_unref (DBusMessageLoader *loader)
       close_unix_fds(loader->unix_fds, &loader->n_unix_fds);
       dbus_free(loader->unix_fds);
 #endif
-      _dbus_list_clear_full (&loader->messages,
-                             (DBusFreeFunction) dbus_message_unref);
+      _dbus_list_clear_full (&loader->messages, _dbus_message_unref_free_func);
       _dbus_string_free (&loader->data);
       dbus_free (loader);
     }

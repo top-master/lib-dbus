@@ -278,8 +278,10 @@ oom:
 }
 
 static void
-bus_container_instance_unref (BusContainerInstance *self)
+bus_container_instance_unref (void *p)
 {
+  BusContainerInstance *self = p;
+
   _dbus_assert (self->refcount > 0);
 
   if (--self->refcount == 0)
@@ -444,8 +446,10 @@ fail:
 }
 
 static void
-bus_container_creator_data_free (BusContainerCreatorData *self)
+bus_container_creator_data_free (void *p)
 {
+  BusContainerCreatorData *self = p;
+
   /* Each instance holds a ref to the creator, so there should be
    * nothing here */
   _dbus_assert (self->instances == NULL);
@@ -523,7 +527,7 @@ new_connection_cb (DBusServer     *server,
 
   if (!dbus_connection_set_data (new_connection, contained_data_slot,
                                  bus_container_instance_ref (instance),
-                                 (DBusFreeFunction) bus_container_instance_unref))
+                                 bus_container_instance_unref))
     {
       bus_container_instance_unref (instance);
       bus_container_instance_lost_connection (instance, new_connection);
@@ -670,7 +674,7 @@ bus_container_instance_listen (BusContainerInstance *self,
   /* Cannot fail because the memory it uses was already allocated */
   dbus_server_set_new_connection_function (self->server, new_connection_cb,
                                            bus_container_instance_ref (self),
-                                           (DBusFreeFunction) bus_container_instance_unref);
+                                           bus_container_instance_unref);
   return TRUE;
 }
 
@@ -717,7 +721,7 @@ bus_containers_handle_add_server (DBusConnection *connection,
 
       if (!dbus_connection_set_data (connection, container_creator_data_slot,
                                      creator_data,
-                                     (DBusFreeFunction) bus_container_creator_data_free))
+                                     bus_container_creator_data_free))
         {
           bus_container_creator_data_free (creator_data);
           goto oom;

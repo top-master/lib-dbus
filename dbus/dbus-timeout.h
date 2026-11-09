@@ -49,7 +49,7 @@ DBusTimeout* _dbus_timeout_new          (int                 interval,
                                          DBusFreeFunction    free_data_function);
 DBusTimeout* _dbus_timeout_ref          (DBusTimeout        *timeout);
 DBUS_PRIVATE_EXPORT
-void         _dbus_timeout_unref        (DBusTimeout        *timeout);
+void         _dbus_timeout_unref        (void               *p);
 DBUS_PRIVATE_EXPORT
 void         _dbus_timeout_restart      (DBusTimeout        *timeout,
                                          int                 interval);

@@ -367,8 +367,9 @@ _dbus_message_filter_ref (DBusMessageFilter *filter)
 }
 
 static void
-_dbus_message_filter_unref (DBusMessageFilter *filter)
+_dbus_message_filter_unref (void *p)
 {
+  DBusMessageFilter *filter = p;
   dbus_int32_t old_value;
 
   old_value = _dbus_atomic_dec (&filter->refcount);
@@ -1284,7 +1285,7 @@ _dbus_connection_new_for_transport (DBusTransport *transport)
   pending_replies =
     _dbus_hash_table_new (DBUS_HASH_INT,
 			  NULL,
-                          (DBusFreeFunction)free_pending_call_on_hash_removal);
+                          free_pending_call_on_hash_removal);
   if (pending_replies == NULL)
     goto error;
   
@@ -2786,7 +2787,7 @@ _dbus_connection_last_unref (DBusConnection *connection)
   _dbus_list_clear (&connection->outgoing_messages);
 
   _dbus_list_clear_full (&connection->incoming_messages,
-                         (DBusFreeFunction) dbus_message_unref);
+                         _dbus_message_unref_free_func);
 
   _dbus_counter_unref (connection->outgoing_counter);
 
@@ -4735,8 +4736,7 @@ dbus_connection_dispatch (DBusConnection *connection)
       link = next;
     }
 
-  _dbus_list_clear_full (&filter_list_copy,
-                         (DBusFreeFunction) _dbus_message_filter_unref);
+  _dbus_list_clear_full (&filter_list_copy, _dbus_message_filter_unref);
 
   CONNECTION_LOCK (connection);
 
