@@ -5,7 +5,7 @@
 If you find a security vulnerability that is not known to the public,
 please report it privately to <dbus-security@lists.freedesktop.org>,
 or by reporting a Gitlab issue at
-<https://gitlab.freedesktop.org/dbus/dbus-python/-/work_items/new>
+<https://gitlab.freedesktop.org/dbus/dbus/-/work_items/new>
 and marking it as "confidential".
 
 If you are unsure whether a bug is a security vulnerability or not,
