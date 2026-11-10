@@ -265,8 +265,13 @@ read_data_into_auth (DBusTransport *transport,
 
   _dbus_auth_get_buffer (transport->auth, &buffer);
   
+#ifdef HAVE_UNIX_FD_PASSING
+  bytes_read = _dbus_read_socket_line (socket_transport->fd,
+                                      buffer, socket_transport->max_bytes_read_per_iteration);
+#else
   bytes_read = _dbus_read_socket (socket_transport->fd,
                                   buffer, socket_transport->max_bytes_read_per_iteration);
+#endif
   saved_errno = _dbus_save_socket_errno ();
 
   _dbus_auth_return_buffer (transport->auth, buffer);
@@ -847,11 +852,18 @@ do_reading (DBusTransport *transport)
 
       _dbus_message_loader_get_buffer (transport->loader,
                                        &buffer,
-                                       &max_to_read,
-                                       &may_read_unix_fds);
+                                       DBUS_TRANSPORT_CAN_SEND_UNIX_FD (transport) ? &max_to_read : NULL,
+                                       DBUS_TRANSPORT_CAN_SEND_UNIX_FD (transport) ? &may_read_unix_fds : NULL);
 
       if (max_to_read > socket_transport->max_bytes_read_per_iteration)
         max_to_read = socket_transport->max_bytes_read_per_iteration;
+
+      if (max_to_read == 0)
+        {
+          _dbus_message_loader_return_buffer (transport->loader, buffer);
+          oom = !_dbus_transport_queue_messages (transport);
+          goto out;
+        }
 
 #ifdef HAVE_UNIX_FD_PASSING
       if (DBUS_TRANSPORT_CAN_SEND_UNIX_FD(transport) && may_read_unix_fds)

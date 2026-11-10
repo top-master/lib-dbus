@@ -44,6 +44,7 @@
 #   include <sys/resource.h>
 # endif
 # include <sys/stat.h>
+# include <sys/socket.h>
 # include <sys/time.h>
 # include <sys/types.h>
 # include <unistd.h>
@@ -411,6 +412,129 @@ test_relay (Fixture *f,
   g_assert (dbus_connection_get_is_connected (f->right_server_conn));
   g_assert (dbus_connection_get_is_connected (f->left_client_conn));
   g_assert (dbus_connection_get_is_connected (f->left_server_conn));
+#else
+  g_test_skip ("fd-passing not supported on this platform");
+#endif
+}
+
+static void
+test_fd_association (Fixture *f,
+    gconstpointer data)
+{
+#ifdef HAVE_UNIX_FD_PASSING
+  DBusSocket socket;
+  DBusMessage *message;
+  DBusString buffer;
+  char *payload;
+  int payload_len, i, n_messages = 0;
+
+  test_connect (f, TRUE);
+  g_assert_true (dbus_connection_get_socket (f->left_client_conn, &socket.fd));
+  dbus_connection_flush (f->left_client_conn);
+
+  for (i = 0; i < 2; i++)
+    {
+      message = dbus_message_new_signal ("/", "com.example.Test", "Association");
+      g_assert_nonnull (message);
+      dbus_message_set_serial (message, i + 1);
+      if (i == 1)
+        g_assert_true (dbus_message_append_args (message,
+            DBUS_TYPE_UNIX_FD, &f->fd_before, DBUS_TYPE_INVALID));
+      g_assert_true (dbus_message_marshal (message, &payload, &payload_len));
+      dbus_message_unref (message);
+      _dbus_string_init_const_len (&buffer, payload, payload_len);
+
+      if (i == 0)
+        g_assert_cmpint (_dbus_write_socket_with_unix_fds (socket, &buffer,
+            0, payload_len, &f->fd_before, 1), ==, payload_len);
+      else
+        g_assert_cmpint (_dbus_write_socket (socket, &buffer,
+            0, payload_len), ==, payload_len);
+      dbus_free (payload);
+    }
+
+  g_assert_cmpint (shutdown (socket.fd, SHUT_WR), ==, 0);
+  while (dbus_connection_get_is_connected (f->left_server_conn))
+    test_main_context_iterate (f->ctx, TRUE);
+
+  dbus_connection_flush (f->right_server_conn);
+  dbus_connection_close (f->right_server_conn);
+  while (dbus_connection_get_is_connected (f->right_client_conn))
+    test_main_context_iterate (f->ctx, TRUE);
+
+  while ((message = g_queue_pop_head (&f->messages)) != NULL)
+    {
+      if (dbus_message_is_signal (message, "com.example.Test", "Association"))
+        {
+          g_assert_false (dbus_message_contains_unix_fds (message));
+          n_messages++;
+        }
+      dbus_message_unref (message);
+    }
+  g_assert_cmpint (n_messages, ==, 1);
+#else
+  g_test_skip ("fd-passing not supported on this platform");
+#endif
+}
+
+static void
+test_fragmented_fds (Fixture *f,
+    gconstpointer data)
+{
+#ifdef HAVE_UNIX_FD_PASSING
+  DBusSocket socket;
+  DBusMessage *message;
+  DBusString buffer;
+  char *payload;
+  char byte = 1;
+  int payload_len, fd_zero, received[2];
+  int offset = GPOINTER_TO_UINT (data);
+
+  if (f->skip)
+    return;
+
+  test_connect (f, TRUE);
+  g_assert_true (dbus_connection_get_socket (f->left_client_conn, &socket.fd));
+  dbus_connection_flush (f->left_client_conn);
+  fd_zero = open ("/dev/zero", O_RDONLY);
+  g_assert_cmpint (fd_zero, >=, 0);
+  _dbus_fd_set_close_on_exec (fd_zero);
+  message = dbus_message_new_signal ("/", "com.example.Test", "Fragmented");
+  g_assert_nonnull (message);
+  dbus_message_set_serial (message, 1);
+  g_assert_true (dbus_message_append_args (message,
+      DBUS_TYPE_UNIX_FD, &f->fd_before,
+      DBUS_TYPE_UNIX_FD, &fd_zero, DBUS_TYPE_INVALID));
+  g_assert_true (dbus_message_marshal (message, &payload, &payload_len));
+  dbus_message_unref (message);
+  _dbus_string_init_const_len (&buffer, payload, payload_len);
+
+  if (offset > 0)
+    g_assert_cmpint (_dbus_write_socket (socket, &buffer, 0, offset), ==, offset);
+  g_assert_cmpint (_dbus_write_socket_with_unix_fds (socket, &buffer,
+      offset, 16, &f->fd_before, 1), ==, 16);
+  offset += 16;
+  g_assert_cmpint (_dbus_write_socket_with_unix_fds (socket, &buffer,
+      offset, payload_len - offset, &fd_zero, 1), ==, payload_len - offset);
+  dbus_free (payload);
+  g_assert_cmpint (close (fd_zero), ==, 0);
+
+  while (g_queue_is_empty (&f->messages) &&
+         dbus_connection_get_is_connected (f->left_server_conn))
+    test_main_context_iterate (f->ctx, TRUE);
+
+  g_assert_true (dbus_connection_get_is_connected (f->left_server_conn));
+  message = g_queue_pop_head (&f->messages);
+  g_assert_nonnull (message);
+  g_assert_true (dbus_message_get_args (message, &f->e,
+      DBUS_TYPE_UNIX_FD, &received[0],
+      DBUS_TYPE_UNIX_FD, &received[1], DBUS_TYPE_INVALID));
+  g_assert_cmpint (read (received[0], &byte, 1), ==, 0);
+  g_assert_cmpint (read (received[1], &byte, 1), ==, 1);
+  g_assert_cmpint (byte, ==, 0);
+  g_assert_cmpint (close (received[0]), ==, 0);
+  g_assert_cmpint (close (received[1]), ==, 0);
+  dbus_message_unref (message);
 #else
   g_test_skip ("fd-passing not supported on this platform");
 #endif
@@ -944,6 +1068,12 @@ main (int argc,
 
   g_test_add ("/relay", Fixture, NULL, setup,
       test_relay, teardown);
+  g_test_add ("/association", Fixture, NULL, setup,
+      test_fd_association, teardown);
+  g_test_add ("/fragmented-fds/header", Fixture, NULL, setup,
+      test_fragmented_fds, teardown);
+  g_test_add ("/fragmented-fds/body", Fixture, GUINT_TO_POINTER (16), setup,
+      test_fragmented_fds, teardown);
   g_test_add ("/limit", Fixture, NULL, setup,
       test_limit, teardown);
 

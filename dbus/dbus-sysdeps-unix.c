@@ -345,6 +345,50 @@ _dbus_read_socket (DBusSocket        fd,
   return _dbus_read (fd.fd, buffer, count);
 }
 
+#ifdef HAVE_UNIX_FD_PASSING
+/**
+ * Read up to one line without consuming following message bytes and their
+ * ancillary file descriptors during authentication.
+ *
+ * @param fd the socket
+ * @param buffer string to append data to
+ * @param count max amount of data to read
+ * @returns number of bytes appended, or -1 on error
+ */
+int
+_dbus_read_socket_line (DBusSocket  fd,
+                        DBusString *buffer,
+                        int         count)
+{
+  int start, bytes_read, end;
+
+  start = _dbus_string_get_length (buffer);
+  if (!_dbus_string_lengthen (buffer, count))
+    {
+      errno = ENOMEM;
+      return -1;
+    }
+
+  do
+    bytes_read = recv (fd.fd, _dbus_string_get_data_len (buffer, start, count),
+                       count, MSG_PEEK);
+  while (bytes_read < 0 && errno == EINTR);
+
+  if (bytes_read > 0)
+    {
+      _dbus_string_set_length (buffer, start + bytes_read);
+      if (_dbus_string_find (buffer, start, "\n", &end))
+        bytes_read = end - start + 1;
+    }
+
+  _dbus_string_set_length (buffer, start);
+  if (bytes_read <= 0)
+    return bytes_read;
+
+  return _dbus_read_socket (fd, buffer, bytes_read);
+}
+#endif
+
 /**
  * Like _dbus_write(), but only supports sockets
  * and is thus available on Windows.

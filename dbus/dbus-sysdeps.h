@@ -222,6 +222,11 @@ DBUS_PRIVATE_EXPORT
 int         _dbus_read_socket      (DBusSocket        fd,
                                     DBusString       *buffer,
                                     int               count);
+#ifdef HAVE_UNIX_FD_PASSING
+int         _dbus_read_socket_line (DBusSocket        fd,
+                                    DBusString       *buffer,
+                                    int               count);
+#endif
 DBUS_PRIVATE_EXPORT
 int         _dbus_write_socket     (DBusSocket        fd,
                                     const DBusString *buffer,

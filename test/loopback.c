@@ -39,6 +39,11 @@
 #include <string.h>
 #ifdef G_OS_UNIX
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <unistd.h>
+#ifdef HAVE_GIO_UNIX
+#include <gio/gunixfdmessage.h>
+#endif
 #endif
 
 #include "test-utils-glib.h"
@@ -151,6 +156,92 @@ setup (Fixture *f,
   dbus_server_set_new_connection_function (f->server,
       new_conn_cb, f, NULL);
   test_server_setup (f->ctx, f->server);
+}
+
+static void
+test_pipelined_fd (Fixture *f,
+    gconstpointer data)
+{
+#if defined(HAVE_UNIX_FD_PASSING) && defined(HAVE_GIO_UNIX)
+  GError *error = NULL;
+  GIOStream *stream;
+  GSocket *socket;
+  GSocketControlMessage *control;
+  GOutputVector vector;
+  GString *auth;
+  char *address, *uid, *payload;
+  const char *p;
+  DBusMessage *outgoing, *incoming;
+  gsize written;
+  gssize sent;
+  int payload_len, fd, received_fd;
+  char byte;
+
+  if (f->skip)
+    return;
+
+  address = dbus_server_get_address (f->server);
+  stream = g_dbus_address_get_stream_sync (address, NULL, NULL, &error);
+  g_assert_no_error (error);
+  dbus_free (address);
+  socket = g_socket_connection_get_socket (G_SOCKET_CONNECTION (stream));
+
+  auth = g_string_new_len ("\0AUTH EXTERNAL ", 15);
+  uid = g_strdup_printf ("%lu", (unsigned long) getuid ());
+  for (p = uid; *p != '\0'; p++)
+    g_string_append_printf (auth, "%02x", (unsigned char) *p);
+  g_free (uid);
+  g_string_append (auth, "\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n");
+
+  g_output_stream_write_all (g_io_stream_get_output_stream (stream),
+      auth->str, auth->len, &written, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_cmpuint (written, ==, auth->len);
+  g_string_free (auth, TRUE);
+
+  fd = open ("/dev/null", O_RDONLY);
+  g_assert_cmpint (fd, >=, 0);
+  outgoing = dbus_message_new_signal ("/", "com.example.Test", "Pipelined");
+  g_assert_nonnull (outgoing);
+  dbus_message_set_serial (outgoing, 1);
+  g_assert_true (dbus_message_append_args (outgoing,
+      DBUS_TYPE_UNIX_FD, &fd, DBUS_TYPE_INVALID));
+  g_assert_true (dbus_message_marshal (outgoing, &payload, &payload_len));
+  dbus_message_unref (outgoing);
+
+  control = g_unix_fd_message_new ();
+  g_unix_fd_message_append_fd (G_UNIX_FD_MESSAGE (control), fd, &error);
+  g_assert_no_error (error);
+  vector.buffer = payload;
+  vector.size = payload_len;
+  sent = g_socket_send_message (socket, NULL, &vector, 1, &control, 1,
+      G_SOCKET_MSG_NONE, NULL, &error);
+  g_assert_no_error (error);
+  g_assert_cmpint (sent, ==, payload_len);
+  g_object_unref (control);
+  dbus_free (payload);
+  close (fd);
+
+  while (f->server_conn == NULL ||
+      (g_queue_is_empty (&f->server_messages) &&
+       dbus_connection_get_is_connected (f->server_conn)))
+    test_main_context_iterate (f->ctx, TRUE);
+
+  g_assert_true (dbus_connection_get_is_authenticated (f->server_conn));
+  g_assert_true (dbus_connection_get_is_connected (f->server_conn));
+  incoming = g_queue_pop_head (&f->server_messages);
+  g_assert_nonnull (incoming);
+  g_assert_true (dbus_message_is_signal (incoming,
+      "com.example.Test", "Pipelined"));
+  g_assert_true (dbus_message_get_args (incoming, &f->e,
+      DBUS_TYPE_UNIX_FD, &received_fd, DBUS_TYPE_INVALID));
+  g_assert_cmpint (read (received_fd, &byte, 1), ==, 0);
+  close (received_fd);
+  dbus_message_unref (incoming);
+  g_object_unref (stream);
+#else
+  g_test_skip ("fd-passing not supported on this platform");
+#endif
 }
 
 static void
@@ -849,6 +940,9 @@ main (int argc,
   g_test_add ("/connect/unix/no-runtime", Fixture,
       unix_runtime_or_fallback, setup_no_runtime, test_connect,
       teardown_no_runtime);
+
+  g_test_add ("/message/pipelined-fd/unix", Fixture, unix_tmpdir, setup,
+      test_pipelined_fd, teardown);
 
   g_test_add ("/epipe/unix", Fixture, unix_tmpdir, setup,
       test_epipe, teardown);
