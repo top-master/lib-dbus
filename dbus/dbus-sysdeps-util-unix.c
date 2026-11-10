@@ -1537,52 +1537,97 @@ _dbus_get_session_config_file (DBusString *str)
 }
 
 /**
+ * Send a state string to the service manager using the sd_notify protocol.
+ *
+ * @param state the state, for example "READY=1"
+ */
+static void
+_dbus_daemon_notify (const char *state)
+{
+#ifdef HAVE_SYSTEMD
+  sd_notify (0, state);
+#else
+  const char *path;
+  size_t path_len;
+  struct sockaddr_un addr;
+  int fd;
+  int flags = 0;
+
+  path = _dbus_getenv ("NOTIFY_SOCKET");
+
+  if (path == NULL || (path[0] != '/' && path[0] != '@'))
+    return;
+
+  path_len = strlen (path);
+
+  if (path_len >= sizeof (addr.sun_path))
+    return;
+
+  _DBUS_ZERO (addr);
+  addr.sun_family = AF_UNIX;
+  memcpy (addr.sun_path, path, path_len);
+
+  /* A leading '@' means a Linux abstract socket */
+  if (addr.sun_path[0] == '@')
+    addr.sun_path[0] = '\0';
+
+#ifdef SOCK_CLOEXEC
+  fd = socket (AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+#else
+  fd = socket (AF_UNIX, SOCK_DGRAM, 0);
+#endif
+
+  if (fd < 0)
+    return;
+
+#if HAVE_DECL_MSG_NOSIGNAL
+  flags |= MSG_NOSIGNAL;
+#endif
+
+  sendto (fd, state, strlen (state), flags, (struct sockaddr *) &addr,
+          _DBUS_STRUCT_OFFSET (struct sockaddr_un, sun_path) + path_len);
+  _dbus_close (fd, NULL);
+#endif
+}
+
+/**
  * Report to a service manager that the daemon calling this function is
- * ready for use. This is currently only implemented for systemd.
+ * ready for use.
  */
 void
 _dbus_daemon_report_ready (void)
 {
-#ifdef HAVE_SYSTEMD
-  sd_notify (0, "READY=1");
-#endif
+  _dbus_daemon_notify ("READY=1");
 }
 
 /**
  * Report to a service manager that the daemon calling this function is
- * reloading configuration. This is currently only implemented for systemd.
+ * reloading configuration.
  */
 void
 _dbus_daemon_report_reloading (void)
 {
-#ifdef HAVE_SYSTEMD
-  sd_notify (0, "RELOADING=1");
-#endif
+  _dbus_daemon_notify ("RELOADING=1");
 }
 
 /**
- * Report to a service manager that the daemon calling this function is
- * reloading configuration. This is currently only implemented for systemd.
+ * Report to a service manager that the daemon calling this function has
+ * finished reloading configuration.
  */
 void
 _dbus_daemon_report_reloaded (void)
 {
-#ifdef HAVE_SYSTEMD
-  /* For systemd, this is the same code */
-  _dbus_daemon_report_ready ();
-#endif
+  _dbus_daemon_notify ("READY=1");
 }
 
 /**
  * Report to a service manager that the daemon calling this function is
- * shutting down. This is currently only implemented for systemd.
+ * shutting down.
  */
 void
 _dbus_daemon_report_stopping (void)
 {
-#ifdef HAVE_SYSTEMD
-  sd_notify (0, "STOPPING=1");
-#endif
+  _dbus_daemon_notify ("STOPPING=1");
 }
 
 /**
